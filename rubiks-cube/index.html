@@ -10,6 +10,7 @@
             overflow: hidden;
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             background: radial-gradient(circle at center, #2b32b2, #1488cc);
+            user-select: none; /* Prevent text selection during drag */
         }
         #container {
             width: 100vw;
@@ -109,11 +110,10 @@
 <body>
     <div id="controls-help">
         <strong>Controls:</strong><br>
-        • Left Click: Rotate Face CW<br>
-        • Right Click / Shift+Click: Rotate Face CCW<br>
+        • Drag face to rotate<br>
         • Drag background to rotate view
     </div>
-    <div id="status">Ready</div>
+    <div id="status">Loading...</div>
     <div id="container"></div>
     <div id="ui">
         <button id="btn-reset">Reset</button>
@@ -125,8 +125,8 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tween.js/18.6.4/tween.umd.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/min2phase@0.0.1/dist/min2phase.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+    <script src="https://unpkg.com/cube-solver@2.4.1/dist/bundle.js"></script>
 
     <script>
         // --- Configuration ---
@@ -143,102 +143,106 @@
         // --- Global Variables ---
         let scene, camera, renderer, controls;
         let cubeGroup;
-        let cubes = []; // Array of 27 meshes
+        let cubes = [];
         let isAnimating = false;
         let raycaster, mouse;
         let audioCtx;
+        let moveHistory = [];
 
-        // Sound Synthesis
+        // Interaction State
+        let isDragging = false;
+        let dragStart = new THREE.Vector2();
+        let dragCube = null;
+        let dragNormal = null;
+        let hoveredCube = null;
+
+        // Sound
         function playSound(type) {
-            if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            const osc = audioCtx.createOscillator();
-            const gain = audioCtx.createGain();
-            osc.connect(gain);
-            gain.connect(audioCtx.destination);
-
-            const now = audioCtx.currentTime;
-            if (type === 'move') {
-                osc.type = 'sine';
-                osc.frequency.setValueAtTime(300, now);
-                osc.frequency.exponentialRampToValueAtTime(50, now + 0.1);
-                gain.gain.setValueAtTime(0.3, now);
-                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
-                osc.start(now);
-                osc.stop(now + 0.1);
-            } else if (type === 'solve') {
-                osc.type = 'triangle';
-                osc.frequency.setValueAtTime(400, now);
-                osc.frequency.linearRampToValueAtTime(800, now + 0.2);
-                gain.gain.setValueAtTime(0.3, now);
-                gain.gain.linearRampToValueAtTime(0.01, now + 0.4);
-                osc.start(now);
-                osc.stop(now + 0.4);
-            }
+            try {
+                if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                const now = audioCtx.currentTime;
+                if (type === 'move') {
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(300, now);
+                    osc.frequency.exponentialRampToValueAtTime(50, now + 0.1);
+                    gain.gain.setValueAtTime(0.3, now);
+                    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+                    osc.start(now);
+                    osc.stop(now + 0.1);
+                } else if (type === 'solve') {
+                    osc.type = 'triangle';
+                    osc.frequency.setValueAtTime(400, now);
+                    osc.frequency.linearRampToValueAtTime(800, now + 0.2);
+                    gain.gain.setValueAtTime(0.3, now);
+                    gain.gain.linearRampToValueAtTime(0.01, now + 0.4);
+                    osc.start(now);
+                    osc.stop(now + 0.4);
+                }
+            } catch(e) {}
         }
 
         // --- Initialization ---
         function init() {
-            // Scene Setup
-            scene = new THREE.Scene();
+            try {
+                scene = new THREE.Scene();
+                camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+                camera.position.set(6, 5, 8);
+                camera.lookAt(0, 0, 0);
 
-            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
-            camera.position.set(6, 5, 8);
-            camera.lookAt(0, 0, 0);
+                renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+                renderer.setSize(window.innerWidth, window.innerHeight);
+                renderer.setPixelRatio(window.devicePixelRatio);
+                document.getElementById('container').appendChild(renderer.domElement);
 
-            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.setPixelRatio(window.devicePixelRatio);
-            document.getElementById('container').appendChild(renderer.domElement);
+                controls = new THREE.OrbitControls(camera, renderer.domElement);
+                controls.enableDamping = true;
+                controls.enablePan = false;
+                controls.minDistance = 5;
+                controls.maxDistance = 20;
 
-            controls = new THREE.OrbitControls(camera, renderer.domElement);
-            controls.enableDamping = true;
-            controls.enablePan = false;
-            controls.minDistance = 5;
-            controls.maxDistance = 20;
+                scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+                const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+                dirLight.position.set(10, 20, 10);
+                scene.add(dirLight);
+                const backLight = new THREE.DirectionalLight(0xffffff, 0.3);
+                backLight.position.set(-10, -10, -10);
+                scene.add(backLight);
 
-            // Lights
-            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
-            scene.add(ambientLight);
+                createSprinkles();
 
-            const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-            dirLight.position.set(10, 20, 10);
-            scene.add(dirLight);
+                raycaster = new THREE.Raycaster();
+                mouse = new THREE.Vector2();
 
-            const backLight = new THREE.DirectionalLight(0xffffff, 0.3);
-            backLight.position.set(-10, -10, -10);
-            scene.add(backLight);
+                createRubiksCube();
 
-            // Background Sprinkles
-            createSprinkles();
+                window.addEventListener('resize', onWindowResize);
+                window.addEventListener('mousedown', onMouseDown);
+                window.addEventListener('mousemove', onMouseMove);
+                window.addEventListener('mouseup', onMouseUp);
+                window.addEventListener('contextmenu', e => e.preventDefault());
 
-            // Raycaster
-            raycaster = new THREE.Raycaster();
-            mouse = new THREE.Vector2();
+                document.getElementById('btn-reset').addEventListener('click', resetCube);
+                document.getElementById('btn-scramble').addEventListener('click', scrambleCube);
+                document.getElementById('btn-solve').addEventListener('click', solveCubeHandler);
 
-            // Create Cube
-            createRubiksCube();
+                animate();
 
-            // Event Listeners
-            window.addEventListener('resize', onWindowResize);
-            window.addEventListener('mousedown', onMouseDown);
-            // Handle context menu for right click
-            window.addEventListener('contextmenu', e => e.preventDefault());
-
-            // Buttons
-            document.getElementById('btn-reset').addEventListener('click', resetCube);
-            document.getElementById('btn-scramble').addEventListener('click', scrambleCube);
-            document.getElementById('btn-solve').addEventListener('click', solveCubeHandler);
-
-            // Animation Loop
-            animate();
-
-            // Init Solver
-            initSolver();
+                if (typeof cubeSolver === 'undefined') {
+                    document.getElementById('status').innerText = "Solver Lib Missing";
+                } else {
+                    document.getElementById('status').innerText = "Ready";
+                }
+            } catch (err) {
+                console.error(err);
+            }
         }
 
         function createSprinkles() {
-            const count = 50;
-            for(let i=0; i<count; i++) {
+            for(let i=0; i<50; i++) {
                 const el = document.createElement('div');
                 el.className = 'sprinkle';
                 el.style.left = Math.random() * 100 + 'vw';
@@ -248,19 +252,6 @@
             }
         }
 
-        let solverSearch;
-        function initSolver() {
-            if (typeof min2phase !== 'undefined') {
-                try {
-                    min2phase.init();
-                    solverSearch = new min2phase.Search();
-                } catch(e) {
-                    console.error("Solver init failed", e);
-                }
-            }
-        }
-
-        // --- Cube Creation ---
         function createRubiksCube() {
             if (cubeGroup) scene.remove(cubeGroup);
             cubeGroup = new THREE.Group();
@@ -273,282 +264,184 @@
                 for (let y = -1; y <= 1; y++) {
                     for (let z = -1; z <= 1; z++) {
                         const materials = [
-                            new THREE.MeshPhongMaterial({ color: x === 1 ? COLORS.R : COLORS.CORE }), // Right
-                            new THREE.MeshPhongMaterial({ color: x === -1 ? COLORS.L : COLORS.CORE }), // Left
-                            new THREE.MeshPhongMaterial({ color: y === 1 ? COLORS.U : COLORS.CORE }), // Top
-                            new THREE.MeshPhongMaterial({ color: y === -1 ? COLORS.D : COLORS.CORE }), // Bottom
-                            new THREE.MeshPhongMaterial({ color: z === 1 ? COLORS.F : COLORS.CORE }), // Front
-                            new THREE.MeshPhongMaterial({ color: z === -1 ? COLORS.B : COLORS.CORE }), // Back
+                            new THREE.MeshPhongMaterial({ color: x === 1 ? COLORS.R : COLORS.CORE, name: 'R' }),
+                            new THREE.MeshPhongMaterial({ color: x === -1 ? COLORS.L : COLORS.CORE, name: 'L' }),
+                            new THREE.MeshPhongMaterial({ color: y === 1 ? COLORS.U : COLORS.CORE, name: 'U' }),
+                            new THREE.MeshPhongMaterial({ color: y === -1 ? COLORS.D : COLORS.CORE, name: 'D' }),
+                            new THREE.MeshPhongMaterial({ color: z === 1 ? COLORS.F : COLORS.CORE, name: 'F' }),
+                            new THREE.MeshPhongMaterial({ color: z === -1 ? COLORS.B : COLORS.CORE, name: 'B' }),
                         ];
 
                         const mesh = new THREE.Mesh(geometry, materials);
                         mesh.position.set(x, y, z);
-
-                        // Store logical coordinates/ID in userData
-                        mesh.userData = {
-                            initialPos: new THREE.Vector3(x,y,z),
-                            isCube: true
-                        };
-
+                        mesh.userData = { isCube: true };
                         cubeGroup.add(mesh);
                         cubes.push(mesh);
                     }
                 }
             }
+            moveHistory = [];
         }
 
-        // --- Interaction ---
+        // --- Interaction: Drag to Rotate ---
         function onMouseDown(event) {
             if (isAnimating) return;
             if (event.target.tagName === 'BUTTON') return;
 
-            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            const rect = renderer.domElement.getBoundingClientRect();
+            mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
             raycaster.setFromCamera(mouse, camera);
             const intersects = raycaster.intersectObjects(cubes);
 
             if (intersects.length > 0) {
-                const intersect = intersects[0];
-                const object = intersect.object;
-                const normal = intersect.face.normal.clone();
-
-                normal.transformDirection(object.matrixWorld).round();
-
-                const axisVector = normal;
-                let axis = '';
-                let slice = 0;
-
-                if (Math.abs(axisVector.x) > 0.5) { axis = 'x'; slice = Math.round(object.position.x); }
-                else if (Math.abs(axisVector.y) > 0.5) { axis = 'y'; slice = Math.round(object.position.y); }
-                else if (Math.abs(axisVector.z) > 0.5) { axis = 'z'; slice = Math.round(object.position.z); }
-
-                if (!axis) return;
-
-                // Pattern: If slice is positive (1), CW is -90. If slice is negative (-1), CW is +90.
-                const baseDir = -1 * slice;
-                const isRightClick = (event.button === 2) || event.shiftKey;
-                const finalDir = isRightClick ? -baseDir : baseDir;
-
-                rotateLayer(axis, slice, finalDir * (Math.PI / 2), 300);
+                controls.enabled = false;
+                isDragging = true;
+                dragStart.copy(mouse);
+                dragCube = intersects[0].object;
+                dragNormal = intersects[0].face.normal.clone().transformDirection(dragCube.matrixWorld).round();
             }
         }
 
-        // --- Logic: Rotation ---
-        function rotateLayer(axis, slice, angle, duration = 300) {
-            if (isAnimating) return;
-            isAnimating = true;
-            playSound('move');
+        function onMouseMove(event) {
+            const rect = renderer.domElement.getBoundingClientRect();
+            mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
-            // Find cubes in the slice
-            const activeCubes = cubes.filter(c => {
-                return Math.abs(c.position[axis] - slice) < 0.1;
-            });
+            if (isDragging && dragCube) {
+                const delta = new THREE.Vector2().subVectors(mouse, dragStart);
+                if (delta.length() > 0.05) { // Drag threshold
+                    handleDrag(delta);
+                    isDragging = false;
+                    controls.enabled = true;
+                }
+            } else {
+                // Hover Logic
+                raycaster.setFromCamera(mouse, camera);
+                const intersects = raycaster.intersectObjects(cubes);
 
-            // Create a pivot object
-            const pivot = new THREE.Object3D();
-            pivot.rotation.set(0, 0, 0);
-            cubeGroup.add(pivot);
+                // Restore previous hover
+                if (hoveredCube && (!intersects.length || intersects[0].object !== hoveredCube)) {
+                     hoveredCube.material.forEach(m => {
+                         if (m.emissive) m.emissive.setHex(0x000000);
+                     });
+                     hoveredCube = null;
+                }
 
-            // Attach cubes to pivot
-            activeCubes.forEach(c => {
-                cubeGroup.remove(c);
-                pivot.add(c);
-            });
-
-            // Animate pivot
-            const targetRotation = {};
-            targetRotation[axis] = angle;
-
-            new TWEEN.Tween(pivot.rotation)
-                .to(targetRotation, duration)
-                .easing(TWEEN.Easing.Quadratic.Out)
-                .onComplete(() => {
-                    // Update cubes transforms and reparent
-                    pivot.updateMatrixWorld();
-                    activeCubes.forEach(c => {
-                        c.updateMatrixWorld();
-                        // Detach from pivot, keeping world transform
-                        pivot.remove(c);
-                        c.applyMatrix4(pivot.matrixWorld); // Apply pivot's transform
-
-                        // Snap position and rotation to clean integers/90deg
-                        c.position.x = Math.round(c.position.x);
-                        c.position.y = Math.round(c.position.y);
-                        c.position.z = Math.round(c.position.z);
-
-                        c.rotation.set(
-                            Math.round(c.rotation.x / (Math.PI/2)) * (Math.PI/2),
-                            Math.round(c.rotation.y / (Math.PI/2)) * (Math.PI/2),
-                            Math.round(c.rotation.z / (Math.PI/2)) * (Math.PI/2)
-                        );
-
-                        c.updateMatrix();
-                        cubeGroup.add(c);
-                    });
-
-                    cubeGroup.remove(pivot);
-                    isAnimating = false;
-                })
-                .start();
-        }
-
-        function onWindowResize() {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        }
-
-        function animate(time) {
-            requestAnimationFrame(animate);
-            TWEEN.update(time);
-            controls.update();
-            renderer.render(scene, camera);
-        }
-
-        // --- Solver Integration ---
-
-        function getFaceletColor(pos, faceNormal) {
-            // Find the cube at this position (approximate)
-            const cube = cubes.find(c => c.position.distanceTo(pos) < 0.2);
-            if (!cube) return null;
-
-            const normals = [
-                new THREE.Vector3(1, 0, 0), // Right (Material 0)
-                new THREE.Vector3(-1, 0, 0),// Left (Material 1)
-                new THREE.Vector3(0, 1, 0), // Top (Material 2)
-                new THREE.Vector3(0, -1, 0),// Bottom (Material 3)
-                new THREE.Vector3(0, 0, 1), // Front (Material 4)
-                new THREE.Vector3(0, 0, -1) // Back (Material 5)
-            ];
-
-            const materialIndices = [0, 1, 2, 3, 4, 5]; // Map to indices in material array
-
-            let foundColor = null;
-
-            for(let i=0; i<6; i++) {
-                const worldNormal = normals[i].clone().applyQuaternion(cube.quaternion);
-                if (worldNormal.dot(faceNormal) > 0.9) {
-                    // This is the face
-                    const mat = cube.material[i];
-                    // Map hex color back to char
-                    if (mat.color.getHex() === COLORS.U) return 'U';
-                    if (mat.color.getHex() === COLORS.R) return 'R';
-                    if (mat.color.getHex() === COLORS.F) return 'F';
-                    if (mat.color.getHex() === COLORS.D) return 'D';
-                    if (mat.color.getHex() === COLORS.L) return 'L';
-                    if (mat.color.getHex() === COLORS.B) return 'B';
+                // Set new hover
+                if (intersects.length > 0) {
+                    const object = intersects[0].object;
+                    if (object !== hoveredCube) {
+                        hoveredCube = object;
+                        object.material.forEach(m => {
+                            if (m.emissive) m.emissive.setHex(0x444444);
+                        });
+                    }
                 }
             }
-            return '?';
         }
 
-        function getCubeString() {
-            // Define the centers of the 9 facelets for each face
-            // Order: U, R, F, D, L, B
-
-            let facelets = [];
-
-            // U (Up): Y=1. Rows: Z=-1, Z=0, Z=1. Cols: X=-1, X=0, X=1.
-            for(let z=-1; z<=1; z++) for(let x=-1; x<=1; x++) facelets.push({ pos: new THREE.Vector3(x, 1, z), normal: new THREE.Vector3(0, 1, 0) });
-
-            // R (Right): X=1. Rows: Y=1, Y=0, Y=-1. Cols: Z=1, Z=0, Z=-1?
-            // Standard R face is to the right of F.
-            for(let y=1; y>=-1; y--) for(let z=1; z>=-1; z--) facelets.push({ pos: new THREE.Vector3(1, y, z), normal: new THREE.Vector3(1, 0, 0) });
-
-            // F (Front): Z=1. Rows: Y=1 to -1. Cols: X=-1 to 1.
-            for(let y=1; y>=-1; y--) for(let x=-1; x<=1; x++) facelets.push({ pos: new THREE.Vector3(x, y, 1), normal: new THREE.Vector3(0, 0, 1) });
-
-            // D (Down): Y=-1. Rows: Z=1 to -1 (Front to Back). Cols: X=-1 to 1.
-            for(let z=1; z>=-1; z--) for(let x=-1; x<=1; x++) facelets.push({ pos: new THREE.Vector3(x, -1, z), normal: new THREE.Vector3(0, -1, 0) });
-
-            // L (Left): X=-1. Rows: Y=1 to -1. Cols: Z=-1 to 1 (Back to Front).
-            for(let y=1; y>=-1; y--) for(let z=-1; z<=1; z++) facelets.push({ pos: new THREE.Vector3(-1, y, z), normal: new THREE.Vector3(-1, 0, 0) });
-
-            // B (Back): Z=-1. Rows: Y=1 to -1. Cols: X=1 to -1 (Right to Left looking from Back?).
-            for(let y=1; y>=-1; y--) for(let x=1; x>=-1; x--) facelets.push({ pos: new THREE.Vector3(x, y, -1), normal: new THREE.Vector3(0, 0, -1) });
-
-            let state = "";
-            for(let f of facelets) {
-                state += getFaceletColor(f.pos, f.normal);
-            }
-            return state;
+        function onMouseUp() {
+            isDragging = false;
+            controls.enabled = true;
         }
 
-        async function solveCubeHandler() {
-            if (isAnimating) return;
-            const state = getCubeString();
-            console.log("Current State:", state);
+        function handleDrag(delta) {
+            if (!dragCube || !dragNormal) return;
 
-            if (state.includes('?')) {
-                document.getElementById('status').innerText = "Error reading state";
-                return;
-            }
+            // Determine Drag Direction in World Space by projecting axes
+            const dirs = {
+                x: new THREE.Vector3(1,0,0),
+                y: new THREE.Vector3(0,1,0),
+                z: new THREE.Vector3(0,0,1)
+            };
 
-            document.getElementById('status').innerText = "Solving...";
+            // Possible movement axes (orthogonal to face normal)
+            const normalAxis = Math.abs(dragNormal.x)>0.5 ? 'x' : (Math.abs(dragNormal.y)>0.5 ? 'y' : 'z');
+            const possibleAxes = ['x','y','z'].filter(k => k !== normalAxis);
 
-            // Check if solved
-            if (state === "UUUUUUUUURRRRRRRRRFFFFFFFFFDDDDDDDDDLLLLLLLLLBBBBBBBBB") {
-                document.getElementById('status').innerText = "Already Solved!";
-                playWin();
-                return;
-            }
+            let bestMatch = null;
+            let maxDot = 0;
 
-            // Use min2phase
-            setTimeout(() => {
-                try {
-                    if (!solverSearch) initSolver();
+            possibleAxes.forEach(axis => {
+                const worldDir = dirs[axis].clone();
+                const screenDir = worldDir.project(camera).clone();
+                const screenDir2D = new THREE.Vector2(screenDir.x, screenDir.y).normalize();
 
-                    const solution = solverSearch ? solverSearch.solution(state, 21, 100000, 0, 0) : null;
-                    console.log("Solution:", solution);
-
-                    if (!solution || solution.startsWith('Error')) {
-                         document.getElementById('status').innerText = "Solver Error";
-                         return;
-                    }
-
-                    // Strip extra spaces and split
-                    const moves = solution.trim().split(/\s+/);
-                    if (moves.length === 0 || (moves.length === 1 && moves[0] === '')) {
-                         document.getElementById('status').innerText = "Already Solved?";
-                         return;
-                    }
-                    applySolution(moves);
-                } catch (e) {
-                    console.error(e);
-                    document.getElementById('status').innerText = "Solver Error";
+                const dot = delta.clone().normalize().dot(screenDir2D);
+                if (Math.abs(dot) > maxDot) {
+                    maxDot = Math.abs(dot);
+                    bestMatch = { axis: axis, sign: Math.sign(dot) };
                 }
-            }, 100);
-        }
-
-        async function applySolution(moves) {
-            for (let move of moves) {
-                if (!move) continue;
-                await performMove(move);
-            }
-            document.getElementById('status').innerText = "Solved!";
-            playWin();
-        }
-
-        function playWin() {
-            playSound('solve');
-            confetti({
-                particleCount: 150,
-                spread: 70,
-                origin: { y: 0.6 }
             });
+
+            if (!bestMatch || maxDot < 0.5) return; // Not aligned enough
+
+            const moveAxis = bestMatch.axis;
+            const rotAxis = ['x','y','z'].find(k => k !== normalAxis && k !== moveAxis);
+            const slice = Math.round(dragCube.position[rotAxis]);
+
+            if (slice === 0) return; // Ignore middle slice for now
+
+            // Identify Face
+            let face = '';
+            if (rotAxis === 'x' && slice === 1) face = 'R';
+            if (rotAxis === 'x' && slice === -1) face = 'L';
+            if (rotAxis === 'y' && slice === 1) face = 'U';
+            if (rotAxis === 'y' && slice === -1) face = 'D';
+            if (rotAxis === 'z' && slice === 1) face = 'F';
+            if (rotAxis === 'z' && slice === -1) face = 'B';
+
+            if (!face) return;
+
+            // Calculate Direction
+            const map = {x:0, y:1, z:2};
+            const iN = map[normalAxis];
+            const iM = map[moveAxis];
+            // Cross Product Order: (iN + 1) % 3 === iM ? +1 : -1
+            const crossSign = ((iN + 1) % 3 === iM) ? 1 : -1;
+
+            // Physical Rotation Direction along RotAxis:
+            const physicalDir = bestMatch.sign * crossSign;
+
+            // Standard Face CW Rotation (looking from face side)
+            // R (Slice 1, RotAxis X): CW is -PI/2. (Physical Dir -1)
+            // L (Slice -1, RotAxis X): CW is +PI/2. (Physical Dir +1)
+            // U (Slice 1, RotAxis Y): CW is -PI/2. (Physical Dir -1)
+            // D (Slice -1, RotAxis Y): CW is +PI/2. (Physical Dir +1)
+            // F (Slice 1, RotAxis Z): CW is -PI/2. (Physical Dir -1)
+            // B (Slice -1, RotAxis Z): CW is +PI/2. (Physical Dir +1)
+
+            // Pattern: If slice is 1, CW is -1. If slice is -1, CW is +1.
+            const idealCWDir = (slice === 1) ? -1 : 1;
+
+            let modifier = '';
+            if (physicalDir === idealCWDir) {
+                modifier = ''; // CW
+            } else {
+                modifier = "'"; // CCW
+            }
+
+            const move = face + modifier;
+            console.log("Drag Move:", move);
+            performMove(move);
         }
 
-        function performMove(move) {
+        // --- Logic: Rotation & Moves ---
+        function performMove(move, skipHistory = false) {
             return new Promise(resolve => {
+                if (!move) { resolve(); return; }
+
                 const face = move[0];
                 const modifier = move.length > 1 ? move[1] : '';
 
-                let axis, slice, angle;
-                // Standard Mapping
-                // U: y axis, slice 1, CW
-                // D: y axis, slice -1, CW (looking from bottom -> CCW looking from top? No, standard definition)
+                if (!skipHistory) {
+                    moveHistory.push(move);
+                    console.log("History:", moveHistory.join(" "));
+                }
 
+                let axis, slice, angle;
                 const duration = 200;
                 const HPI = Math.PI/2;
 
@@ -567,10 +460,109 @@
                     angle *= 2;
                 }
 
-                rotateLayer(axis, slice, angle, duration);
+                rotateLayer(axis, slice, angle, duration, resolve);
+            });
+        }
 
-                // Wait for animation
-                setTimeout(resolve, duration + 50);
+        function rotateLayer(axis, slice, angle, duration, callback) {
+            if (isAnimating) return;
+            isAnimating = true;
+            playSound('move');
+
+            const activeCubes = cubes.filter(c => Math.round(c.position[axis]) === slice);
+
+            const pivot = new THREE.Object3D();
+            pivot.rotation.set(0, 0, 0);
+            cubeGroup.add(pivot);
+
+            activeCubes.forEach(c => pivot.attach(c));
+
+            const targetRotation = {};
+            targetRotation[axis] = angle;
+
+            new TWEEN.Tween(pivot.rotation)
+                .to(targetRotation, duration)
+                .easing(TWEEN.Easing.Quadratic.Out)
+                .onComplete(() => {
+                    pivot.updateMatrixWorld();
+                    activeCubes.forEach(c => {
+                        cubeGroup.attach(c);
+                        c.position.x = Math.round(c.position.x);
+                        c.position.y = Math.round(c.position.y);
+                        c.position.z = Math.round(c.position.z);
+                        c.rotation.x = Math.round(c.rotation.x / (Math.PI/2)) * (Math.PI/2);
+                        c.rotation.y = Math.round(c.rotation.y / (Math.PI/2)) * (Math.PI/2);
+                        c.rotation.z = Math.round(c.rotation.z / (Math.PI/2)) * (Math.PI/2);
+                        c.updateMatrix();
+                    });
+                    cubeGroup.remove(pivot);
+                    isAnimating = false;
+                    if (callback) callback();
+                })
+                .start();
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate(time) {
+            requestAnimationFrame(animate);
+            TWEEN.update(time);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        async function solveCubeHandler() {
+            if (isAnimating) return;
+            if (typeof cubeSolver === 'undefined') {
+                document.getElementById('status').innerText = "Solver Missing";
+                return;
+            }
+            if (moveHistory.length === 0) {
+                 document.getElementById('status').innerText = "Already Solved!";
+                 playWin();
+                 return;
+            }
+
+            document.getElementById('status').innerText = "Solving...";
+            const scramble = moveHistory.join(' ');
+
+            setTimeout(async () => {
+                try {
+                    const solution = cubeSolver.solve(scramble);
+                    if (!solution) {
+                        document.getElementById('status').innerText = "Solved?";
+                        moveHistory = [];
+                        return;
+                    }
+                    const moves = solution.trim().split(/\s+/);
+                    await applySolution(moves);
+                    moveHistory = [];
+                } catch (e) {
+                    console.error(e);
+                    document.getElementById('status').innerText = "Solver Error";
+                }
+            }, 100);
+        }
+
+        async function applySolution(moves) {
+            for (let move of moves) {
+                if (!move) continue;
+                await performMove(move, true);
+            }
+            document.getElementById('status').innerText = "Solved!";
+            playWin();
+        }
+
+        function playWin() {
+            playSound('solve');
+            confetti({
+                particleCount: 150,
+                spread: 70,
+                origin: { y: 0.6 }
             });
         }
 
@@ -578,13 +570,18 @@
              if (isAnimating) return;
              const faces = ['U','D','R','L','F','B'];
              const mods = ['','\'','2'];
-             let moves = [];
-             for(let i=0; i<20; i++) {
-                 const m = faces[Math.floor(Math.random()*6)] + mods[Math.floor(Math.random()*3)];
-                 moves.push(m);
+             let scrambleMoves = [];
+             if (typeof cubeSolver !== 'undefined' && cubeSolver.scramble) {
+                 scrambleMoves = cubeSolver.scramble().split(' ');
+             } else {
+                 for(let i=0; i<20; i++) {
+                     scrambleMoves.push(faces[Math.floor(Math.random()*6)] + mods[Math.floor(Math.random()*3)]);
+                 }
              }
-             applySolution(moves); // Reuse applySolution for animation
-             document.getElementById('status').innerText = "Scrambled";
+             (async () => {
+                 for (let move of scrambleMoves) await performMove(move);
+                 document.getElementById('status').innerText = "Scrambled";
+             })();
         }
 
         function resetCube() {
@@ -593,9 +590,7 @@
             document.getElementById('status').innerText = "Reset";
         }
 
-        // Start
         init();
-
     </script>
 </body>
 </html>
