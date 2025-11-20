@@ -1,6 +1,10 @@
 # Vibe Coded Experiments
 
-This repository is a collection of vibe-coded experiments, tools, and demos.
+This repository is a collection of vibe-coded experiments, tools, and demos by [Diwaker Gupta](https://diwaker.io/about).
+
+## Experiments
+
+- [Hello Vibe](./hello-vibe/)
 
 ## Structure
 
