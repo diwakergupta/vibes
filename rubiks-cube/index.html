@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Rubik's Cube Solver</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: radial-gradient(circle at center, #2b32b2, #1488cc);
+        }
+        #container {
+            width: 100vw;
+            height: 100vh;
+        }
+        #ui {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 15px;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 15px 25px;
+            border-radius: 30px;
+            backdrop-filter: blur(5px);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+        }
+        button {
+            background: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 20px;
+            font-weight: bold;
+            color: #333;
+            cursor: pointer;
+            transition: transform 0.2s, background 0.2s;
+            font-size: 1rem;
+            outline: none;
+        }
+        button:hover {
+            transform: translateY(-2px);
+            background: #f0f0f0;
+        }
+        button:active {
+            transform: translateY(0);
+        }
+        #btn-solve {
+            background: #4CAF50;
+            color: white;
+        }
+        #btn-solve:hover {
+            background: #45a049;
+        }
+        #btn-scramble {
+            background: #FF9800;
+            color: white;
+        }
+        #btn-scramble:hover {
+            background: #e68900;
+        }
+        #btn-reset {
+            background: #2196F3;
+            color: white;
+        }
+        #btn-reset:hover {
+            background: #1976D2;
+        }
+        #controls-help {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: rgba(255, 255, 255, 0.8);
+            background: rgba(0, 0, 0, 0.3);
+            padding: 10px 15px;
+            border-radius: 10px;
+            font-size: 0.9rem;
+            pointer-events: none;
+        }
+        #status {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            color: white;
+            font-weight: bold;
+            font-size: 1.2rem;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+        }
+        /* Sprinkles background animation */
+        .sprinkle {
+            position: absolute;
+            width: 6px;
+            height: 6px;
+            background: rgba(255, 255, 255, 0.5);
+            border-radius: 50%;
+            pointer-events: none;
+            animation: float 10s infinite linear;
+        }
+        @keyframes float {
+            0% { transform: translateY(100vh) rotate(0deg); opacity: 0; }
+            10% { opacity: 1; }
+            90% { opacity: 1; }
+            100% { transform: translateY(-10vh) rotate(360deg); opacity: 0; }
+        }
+    </style>
+</head>
+<body>
+    <div id="controls-help">
+        <strong>Controls:</strong><br>
+        • Left Click: Rotate Face CW<br>
+        • Right Click / Shift+Click: Rotate Face CCW<br>
+        • Drag background to rotate view
+    </div>
+    <div id="status">Ready</div>
+    <div id="container"></div>
+    <div id="ui">
+        <button id="btn-reset">Reset</button>
+        <button id="btn-scramble">Scramble</button>
+        <button id="btn-solve">Solve</button>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tween.js/18.6.4/tween.umd.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/min2phase@0.0.1/dist/min2phase.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+
+    <script>
+        // --- Configuration ---
+        const COLORS = {
+            U: 0xFFFFFF, // White
+            D: 0xFFD500, // Yellow
+            F: 0x009E60, // Green
+            B: 0x0051BA, // Blue
+            R: 0xC41E3A, // Red
+            L: 0xFF5800, // Orange
+            CORE: 0x202020 // Black (internal)
+        };
+
+        // --- Global Variables ---
+        let scene, camera, renderer, controls;
+        let cubeGroup;
+        let cubes = []; // Array of 27 meshes
+        let isAnimating = false;
+        let raycaster, mouse;
+        let audioCtx;
+
+        // Sound Synthesis
+        function playSound(type) {
+            if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+
+            const now = audioCtx.currentTime;
+            if (type === 'move') {
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(300, now);
+                osc.frequency.exponentialRampToValueAtTime(50, now + 0.1);
+                gain.gain.setValueAtTime(0.3, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+                osc.start(now);
+                osc.stop(now + 0.1);
+            } else if (type === 'solve') {
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(400, now);
+                osc.frequency.linearRampToValueAtTime(800, now + 0.2);
+                gain.gain.setValueAtTime(0.3, now);
+                gain.gain.linearRampToValueAtTime(0.01, now + 0.4);
+                osc.start(now);
+                osc.stop(now + 0.4);
+            }
+        }
+
+        // --- Initialization ---
+        function init() {
+            // Scene Setup
+            scene = new THREE.Scene();
+
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+            camera.position.set(6, 5, 8);
+            camera.lookAt(0, 0, 0);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            document.getElementById('container').appendChild(renderer.domElement);
+
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.enablePan = false;
+            controls.minDistance = 5;
+            controls.maxDistance = 20;
+
+            // Lights
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+
+            const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            dirLight.position.set(10, 20, 10);
+            scene.add(dirLight);
+
+            const backLight = new THREE.DirectionalLight(0xffffff, 0.3);
+            backLight.position.set(-10, -10, -10);
+            scene.add(backLight);
+
+            // Background Sprinkles
+            createSprinkles();
+
+            // Raycaster
+            raycaster = new THREE.Raycaster();
+            mouse = new THREE.Vector2();
+
+            // Create Cube
+            createRubiksCube();
+
+            // Event Listeners
+            window.addEventListener('resize', onWindowResize);
+            window.addEventListener('mousedown', onMouseDown);
+            // Handle context menu for right click
+            window.addEventListener('contextmenu', e => e.preventDefault());
+
+            // Buttons
+            document.getElementById('btn-reset').addEventListener('click', resetCube);
+            document.getElementById('btn-scramble').addEventListener('click', scrambleCube);
+            document.getElementById('btn-solve').addEventListener('click', solveCubeHandler);
+
+            // Animation Loop
+            animate();
+
+            // Init Solver
+            initSolver();
+        }
+
+        function createSprinkles() {
+            const count = 50;
+            for(let i=0; i<count; i++) {
+                const el = document.createElement('div');
+                el.className = 'sprinkle';
+                el.style.left = Math.random() * 100 + 'vw';
+                el.style.animationDuration = (5 + Math.random() * 10) + 's';
+                el.style.animationDelay = (Math.random() * 5) + 's';
+                document.body.appendChild(el);
+            }
+        }
+
+        let solverSearch;
+        function initSolver() {
+            if (typeof min2phase !== 'undefined') {
+                try {
+                    min2phase.init();
+                    solverSearch = new min2phase.Search();
+                } catch(e) {
+                    console.error("Solver init failed", e);
+                }
+            }
+        }
+
+        // --- Cube Creation ---
+        function createRubiksCube() {
+            if (cubeGroup) scene.remove(cubeGroup);
+            cubeGroup = new THREE.Group();
+            scene.add(cubeGroup);
+            cubes = [];
+
+            const geometry = new THREE.BoxGeometry(0.95, 0.95, 0.95);
+
+            for (let x = -1; x <= 1; x++) {
+                for (let y = -1; y <= 1; y++) {
+                    for (let z = -1; z <= 1; z++) {
+                        const materials = [
+                            new THREE.MeshPhongMaterial({ color: x === 1 ? COLORS.R : COLORS.CORE }), // Right
+                            new THREE.MeshPhongMaterial({ color: x === -1 ? COLORS.L : COLORS.CORE }), // Left
+                            new THREE.MeshPhongMaterial({ color: y === 1 ? COLORS.U : COLORS.CORE }), // Top
+                            new THREE.MeshPhongMaterial({ color: y === -1 ? COLORS.D : COLORS.CORE }), // Bottom
+                            new THREE.MeshPhongMaterial({ color: z === 1 ? COLORS.F : COLORS.CORE }), // Front
+                            new THREE.MeshPhongMaterial({ color: z === -1 ? COLORS.B : COLORS.CORE }), // Back
+                        ];
+
+                        const mesh = new THREE.Mesh(geometry, materials);
+                        mesh.position.set(x, y, z);
+
+                        // Store logical coordinates/ID in userData
+                        mesh.userData = {
+                            initialPos: new THREE.Vector3(x,y,z),
+                            isCube: true
+                        };
+
+                        cubeGroup.add(mesh);
+                        cubes.push(mesh);
+                    }
+                }
+            }
+        }
+
+        // --- Interaction ---
+        function onMouseDown(event) {
+            if (isAnimating) return;
+            if (event.target.tagName === 'BUTTON') return;
+
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(cubes);
+
+            if (intersects.length > 0) {
+                const intersect = intersects[0];
+                const object = intersect.object;
+                const normal = intersect.face.normal.clone();
+
+                normal.transformDirection(object.matrixWorld).round();
+
+                const axisVector = normal;
+                let axis = '';
+                let slice = 0;
+
+                if (Math.abs(axisVector.x) > 0.5) { axis = 'x'; slice = Math.round(object.position.x); }
+                else if (Math.abs(axisVector.y) > 0.5) { axis = 'y'; slice = Math.round(object.position.y); }
+                else if (Math.abs(axisVector.z) > 0.5) { axis = 'z'; slice = Math.round(object.position.z); }
+
+                if (!axis) return;
+
+                // Pattern: If slice is positive (1), CW is -90. If slice is negative (-1), CW is +90.
+                const baseDir = -1 * slice;
+                const isRightClick = (event.button === 2) || event.shiftKey;
+                const finalDir = isRightClick ? -baseDir : baseDir;
+
+                rotateLayer(axis, slice, finalDir * (Math.PI / 2), 300);
+            }
+        }
+
+        // --- Logic: Rotation ---
+        function rotateLayer(axis, slice, angle, duration = 300) {
+            if (isAnimating) return;
+            isAnimating = true;
+            playSound('move');
+
+            // Find cubes in the slice
+            const activeCubes = cubes.filter(c => {
+                return Math.abs(c.position[axis] - slice) < 0.1;
+            });
+
+            // Create a pivot object
+            const pivot = new THREE.Object3D();
+            pivot.rotation.set(0, 0, 0);
+            cubeGroup.add(pivot);
+
+            // Attach cubes to pivot
+            activeCubes.forEach(c => {
+                cubeGroup.remove(c);
+                pivot.add(c);
+            });
+
+            // Animate pivot
+            const targetRotation = {};
+            targetRotation[axis] = angle;
+
+            new TWEEN.Tween(pivot.rotation)
+                .to(targetRotation, duration)
+                .easing(TWEEN.Easing.Quadratic.Out)
+                .onComplete(() => {
+                    // Update cubes transforms and reparent
+                    pivot.updateMatrixWorld();
+                    activeCubes.forEach(c => {
+                        c.updateMatrixWorld();
+                        // Detach from pivot, keeping world transform
+                        pivot.remove(c);
+                        c.applyMatrix4(pivot.matrixWorld); // Apply pivot's transform
+
+                        // Snap position and rotation to clean integers/90deg
+                        c.position.x = Math.round(c.position.x);
+                        c.position.y = Math.round(c.position.y);
+                        c.position.z = Math.round(c.position.z);
+
+                        c.rotation.set(
+                            Math.round(c.rotation.x / (Math.PI/2)) * (Math.PI/2),
+                            Math.round(c.rotation.y / (Math.PI/2)) * (Math.PI/2),
+                            Math.round(c.rotation.z / (Math.PI/2)) * (Math.PI/2)
+                        );
+
+                        c.updateMatrix();
+                        cubeGroup.add(c);
+                    });
+
+                    cubeGroup.remove(pivot);
+                    isAnimating = false;
+                })
+                .start();
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate(time) {
+            requestAnimationFrame(animate);
+            TWEEN.update(time);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        // --- Solver Integration ---
+
+        function getFaceletColor(pos, faceNormal) {
+            // Find the cube at this position (approximate)
+            const cube = cubes.find(c => c.position.distanceTo(pos) < 0.2);
+            if (!cube) return null;
+
+            const normals = [
+                new THREE.Vector3(1, 0, 0), // Right (Material 0)
+                new THREE.Vector3(-1, 0, 0),// Left (Material 1)
+                new THREE.Vector3(0, 1, 0), // Top (Material 2)
+                new THREE.Vector3(0, -1, 0),// Bottom (Material 3)
+                new THREE.Vector3(0, 0, 1), // Front (Material 4)
+                new THREE.Vector3(0, 0, -1) // Back (Material 5)
+            ];
+
+            const materialIndices = [0, 1, 2, 3, 4, 5]; // Map to indices in material array
+
+            let foundColor = null;
+
+            for(let i=0; i<6; i++) {
+                const worldNormal = normals[i].clone().applyQuaternion(cube.quaternion);
+                if (worldNormal.dot(faceNormal) > 0.9) {
+                    // This is the face
+                    const mat = cube.material[i];
+                    // Map hex color back to char
+                    if (mat.color.getHex() === COLORS.U) return 'U';
+                    if (mat.color.getHex() === COLORS.R) return 'R';
+                    if (mat.color.getHex() === COLORS.F) return 'F';
+                    if (mat.color.getHex() === COLORS.D) return 'D';
+                    if (mat.color.getHex() === COLORS.L) return 'L';
+                    if (mat.color.getHex() === COLORS.B) return 'B';
+                }
+            }
+            return '?';
+        }
+
+        function getCubeString() {
+            // Define the centers of the 9 facelets for each face
+            // Order: U, R, F, D, L, B
+
+            let facelets = [];
+
+            // U (Up): Y=1. Rows: Z=-1, Z=0, Z=1. Cols: X=-1, X=0, X=1.
+            for(let z=-1; z<=1; z++) for(let x=-1; x<=1; x++) facelets.push({ pos: new THREE.Vector3(x, 1, z), normal: new THREE.Vector3(0, 1, 0) });
+
+            // R (Right): X=1. Rows: Y=1, Y=0, Y=-1. Cols: Z=1, Z=0, Z=-1?
+            // Standard R face is to the right of F.
+            for(let y=1; y>=-1; y--) for(let z=1; z>=-1; z--) facelets.push({ pos: new THREE.Vector3(1, y, z), normal: new THREE.Vector3(1, 0, 0) });
+
+            // F (Front): Z=1. Rows: Y=1 to -1. Cols: X=-1 to 1.
+            for(let y=1; y>=-1; y--) for(let x=-1; x<=1; x++) facelets.push({ pos: new THREE.Vector3(x, y, 1), normal: new THREE.Vector3(0, 0, 1) });
+
+            // D (Down): Y=-1. Rows: Z=1 to -1 (Front to Back). Cols: X=-1 to 1.
+            for(let z=1; z>=-1; z--) for(let x=-1; x<=1; x++) facelets.push({ pos: new THREE.Vector3(x, -1, z), normal: new THREE.Vector3(0, -1, 0) });
+
+            // L (Left): X=-1. Rows: Y=1 to -1. Cols: Z=-1 to 1 (Back to Front).
+            for(let y=1; y>=-1; y--) for(let z=-1; z<=1; z++) facelets.push({ pos: new THREE.Vector3(-1, y, z), normal: new THREE.Vector3(-1, 0, 0) });
+
+            // B (Back): Z=-1. Rows: Y=1 to -1. Cols: X=1 to -1 (Right to Left looking from Back?).
+            for(let y=1; y>=-1; y--) for(let x=1; x>=-1; x--) facelets.push({ pos: new THREE.Vector3(x, y, -1), normal: new THREE.Vector3(0, 0, -1) });
+
+            let state = "";
+            for(let f of facelets) {
+                state += getFaceletColor(f.pos, f.normal);
+            }
+            return state;
+        }
+
+        async function solveCubeHandler() {
+            if (isAnimating) return;
+            const state = getCubeString();
+            console.log("Current State:", state);
+
+            if (state.includes('?')) {
+                document.getElementById('status').innerText = "Error reading state";
+                return;
+            }
+
+            document.getElementById('status').innerText = "Solving...";
+
+            // Check if solved
+            if (state === "UUUUUUUUURRRRRRRRRFFFFFFFFFDDDDDDDDDLLLLLLLLLBBBBBBBBB") {
+                document.getElementById('status').innerText = "Already Solved!";
+                playWin();
+                return;
+            }
+
+            // Use min2phase
+            setTimeout(() => {
+                try {
+                    if (!solverSearch) initSolver();
+
+                    const solution = solverSearch ? solverSearch.solution(state, 21, 100000, 0, 0) : null;
+                    console.log("Solution:", solution);
+
+                    if (!solution || solution.startsWith('Error')) {
+                         document.getElementById('status').innerText = "Solver Error";
+                         return;
+                    }
+
+                    // Strip extra spaces and split
+                    const moves = solution.trim().split(/\s+/);
+                    if (moves.length === 0 || (moves.length === 1 && moves[0] === '')) {
+                         document.getElementById('status').innerText = "Already Solved?";
+                         return;
+                    }
+                    applySolution(moves);
+                } catch (e) {
+                    console.error(e);
+                    document.getElementById('status').innerText = "Solver Error";
+                }
+            }, 100);
+        }
+
+        async function applySolution(moves) {
+            for (let move of moves) {
+                if (!move) continue;
+                await performMove(move);
+            }
+            document.getElementById('status').innerText = "Solved!";
+            playWin();
+        }
+
+        function playWin() {
+            playSound('solve');
+            confetti({
+                particleCount: 150,
+                spread: 70,
+                origin: { y: 0.6 }
+            });
+        }
+
+        function performMove(move) {
+            return new Promise(resolve => {
+                const face = move[0];
+                const modifier = move.length > 1 ? move[1] : '';
+
+                let axis, slice, angle;
+                // Standard Mapping
+                // U: y axis, slice 1, CW
+                // D: y axis, slice -1, CW (looking from bottom -> CCW looking from top? No, standard definition)
+
+                const duration = 200;
+                const HPI = Math.PI/2;
+
+                switch(face) {
+                    case 'U': axis='y'; slice=1; angle=-HPI; break;
+                    case 'D': axis='y'; slice=-1; angle=HPI; break;
+                    case 'R': axis='x'; slice=1; angle=-HPI; break;
+                    case 'L': axis='x'; slice=-1; angle=HPI; break;
+                    case 'F': axis='z'; slice=1; angle=-HPI; break;
+                    case 'B': axis='z'; slice=-1; angle=HPI; break;
+                }
+
+                if (modifier === "'") {
+                    angle *= -1;
+                } else if (modifier === "2") {
+                    angle *= 2;
+                }
+
+                rotateLayer(axis, slice, angle, duration);
+
+                // Wait for animation
+                setTimeout(resolve, duration + 50);
+            });
+        }
+
+        function scrambleCube() {
+             if (isAnimating) return;
+             const faces = ['U','D','R','L','F','B'];
+             const mods = ['','\'','2'];
+             let moves = [];
+             for(let i=0; i<20; i++) {
+                 const m = faces[Math.floor(Math.random()*6)] + mods[Math.floor(Math.random()*3)];
+                 moves.push(m);
+             }
+             applySolution(moves); // Reuse applySolution for animation
+             document.getElementById('status').innerText = "Scrambled";
+        }
+
+        function resetCube() {
+            if (isAnimating) return;
+            createRubiksCube();
+            document.getElementById('status').innerText = "Reset";
+        }
+
+        // Start
+        init();
+
+    </script>
+</body>
+</html>
