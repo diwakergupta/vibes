@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Browser Spy - Browser Fingerprint & Info</title>
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --card-bg: #1e293b;
+            --text-primary: #f8fafc;
+            --text-secondary: #94a3b8;
+            --accent: #38bdf8;
+            --accent-glow: rgba(56, 189, 248, 0.2);
+            --border: #334155;
+            --font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            font-family: var(--font-family);
+            line-height: 1.6;
+            min-height: 100vh;
+            padding: 2rem;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 3rem;
+            animation: fadeIn 0.8s ease-out;
+        }
+
+        h1 {
+            font-size: 3rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, #fff 0%, var(--accent) 100%);
+            background-clip: text;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.5rem;
+        }
+
+        .subtitle {
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1.5rem;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 1rem;
+            padding: 1.5rem;
+            transition: transform 0.2s, box-shadow 0.2s;
+            animation: slideUp 0.5s ease-out forwards;
+            opacity: 0;
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px -10px var(--accent-glow);
+            border-color: var(--accent);
+        }
+
+        .card h2 {
+            font-size: 1.25rem;
+            margin-bottom: 1rem;
+            color: var(--accent);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .info-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .info-item:last-child {
+            border-bottom: none;
+        }
+
+        .label {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        .value {
+            font-weight: 500;
+            text-align: right;
+            word-break: break-all;
+            margin-left: 1rem;
+        }
+
+        .loading {
+            color: var(--text-secondary);
+            font-style: italic;
+        }
+
+        canvas#fingerprint {
+            display: none;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+            }
+
+            to {
+                opacity: 1;
+            }
+        }
+
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Stagger animations */
+        .card:nth-child(1) {
+            animation-delay: 0.1s;
+        }
+
+        .card:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+
+        .card:nth-child(3) {
+            animation-delay: 0.3s;
+        }
+
+        .card:nth-child(4) {
+            animation-delay: 0.4s;
+        }
+
+        .card:nth-child(5) {
+            animation-delay: 0.5s;
+        }
+
+        @media (max-width: 600px) {
+            h1 {
+                font-size: 2rem;
+            }
+
+            body {
+                padding: 1rem;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <header>
+        <h1>Browser Spy</h1>
+        <p class="subtitle">See what your browser reveals about you</p>
+    </header>
+
+    <div class="grid">
+        <!-- Network Info -->
+        <div class="card">
+            <h2>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="2" y1="12" x2="22" y2="12"></line>
+                    <path
+                        d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z">
+                    </path>
+                </svg>
+                Network
+            </h2>
+            <div id="network-info">
+                <div class="info-item"><span class="label">IP Address</span><span class="value loading"
+                        id="ip">Loading...</span></div>
+                <div class="info-item"><span class="label">City</span><span class="value loading"
+                        id="city">Loading...</span></div>
+                <div class="info-item"><span class="label">Region</span><span class="value loading"
+                        id="region">Loading...</span></div>
+                <div class="info-item"><span class="label">Country</span><span class="value loading"
+                        id="country">Loading...</span></div>
+                <div class="info-item"><span class="label">ISP</span><span class="value loading"
+                        id="isp">Loading...</span></div>
+            </div>
+        </div>
+
+        <!-- Browser Info -->
+        <div class="card">
+            <h2>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <circle cx="12" cy="12" r="4"></circle>
+                    <line x1="4.93" y1="4.93" x2="9.17" y2="9.17"></line>
+                    <line x1="14.83" y1="14.83" x2="19.07" y2="19.07"></line>
+                    <line x1="14.83" y1="9.17" x2="19.07" y2="4.93"></line>
+                    <line x1="14.83" y1="9.17" x2="18.36" y2="5.64"></line>
+                    <line x1="4.93" y1="19.07" x2="9.17" y2="14.83"></line>
+                </svg>
+                Browser
+            </h2>
+            <div id="browser-info">
+                <!-- Populated by JS -->
+            </div>
+        </div>
+
+        <!-- Hardware Info -->
+        <div class="card">
+            <h2>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+                    <line x1="8" y1="21" x2="16" y2="21"></line>
+                    <line x1="12" y1="17" x2="12" y2="21"></line>
+                </svg>
+                Hardware
+            </h2>
+            <div id="hardware-info">
+                <!-- Populated by JS -->
+            </div>
+        </div>
+
+        <!-- Connection & Battery -->
+        <div class="card">
+            <h2>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M5 12.55a11 11 0 0 1 14.08 0"></path>
+                    <path d="M1.42 9a16 16 0 0 1 21.16 0"></path>
+                    <path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path>
+                    <line x1="12" y1="20" x2="12.01" y2="20"></line>
+                </svg>
+                Connection & Power
+            </h2>
+            <div id="connection-info">
+                <!-- Populated by JS -->
+            </div>
+        </div>
+
+        <!-- Fingerprint -->
+        <div class="card">
+            <h2>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 12c0-3 2.5-5.5 5.5-5.5S23 9 23 12"></path>
+                    <path d="M12 12c0 3-2.5 5.5-5.5 5.5S1 15 1 12"></path>
+                    <path d="M12 12c-3 0-5.5-2.5-5.5-5.5S9 1 12 1"></path>
+                    <path d="M12 12c3 0 5.5 2.5 5.5 5.5S15 23 12 23"></path>
+                </svg>
+                Fingerprint
+            </h2>
+            <div id="fingerprint-info">
+                <div class="info-item"><span class="label">Canvas Hash</span><span class="value"
+                        id="canvas-hash">Calculating...</span></div>
+                <div class="info-item"><span class="label">Timezone</span><span class="value" id="timezone"></span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <canvas id="fingerprint" width="200" height="50"></canvas>
+
+    <script>
+        // Helper to create info item
+        function addInfo(containerId, label, value) {
+            const container = document.getElementById(containerId);
+            const div = document.createElement('div');
+            div.className = 'info-item';
+            div.innerHTML = `<span class="label">${label}</span><span class="value">${value}</span>`;
+            container.appendChild(div);
+        }
+
+        // 1. Network Info
+        fetch('https://ipapi.co/json/')
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('ip').textContent = data.ip || 'Unknown';
+                document.getElementById('city').textContent = data.city || 'Unknown';
+                document.getElementById('region').textContent = data.region || 'Unknown';
+                document.getElementById('country').textContent = data.country_name || 'Unknown';
+                document.getElementById('isp').textContent = data.org || 'Unknown';
+            })
+            .catch(err => {
+                console.error('IP fetch failed', err);
+                document.querySelectorAll('#network-info .value').forEach(el => el.textContent = 'Failed to load');
+            });
+
+        // 2. Browser Info
+        const browserInfo = [
+            ['Browser', navigator.appName],
+            ['Platform', navigator.platform],
+            ['User Agent', navigator.userAgent.substring(0, 30) + '...'],
+            ['Language', navigator.language],
+            ['Languages', navigator.languages.join(', ')],
+            ['Cookies Enabled', navigator.cookieEnabled ? 'Yes' : 'No'],
+            ['Do Not Track', navigator.doNotTrack || 'Unspecified']
+        ];
+        browserInfo.forEach(([label, value]) => addInfo('browser-info', label, value));
+
+        // 3. Hardware Info
+        function getRenderer() {
+            try {
+                const canvas = document.createElement('canvas');
+                const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+                if (!gl) return 'Unknown';
+                const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+                return debugInfo ? gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) : 'Unknown';
+            } catch (e) {
+                return 'Unknown';
+            }
+        }
+
+        const hardwareInfo = [
+            ['Screen Resolution', `${screen.width}x${screen.height}`],
+            ['Window Size', `${window.innerWidth}x${window.innerHeight}`],
+            ['Pixel Ratio', window.devicePixelRatio],
+            ['Color Depth', `${screen.colorDepth}-bit`],
+            ['CPU Cores', navigator.hardwareConcurrency || 'Unknown'],
+            ['Device Memory', navigator.deviceMemory ? `${navigator.deviceMemory} GB` : 'Unknown'],
+            ['GPU Renderer', getRenderer()]
+        ];
+        hardwareInfo.forEach(([label, value]) => addInfo('hardware-info', label, value));
+
+        // 4. Connection & Battery
+        if (navigator.connection) {
+            addInfo('connection-info', 'Type', navigator.connection.effectiveType || 'Unknown');
+            addInfo('connection-info', 'Downlink', navigator.connection.downlink ? `${navigator.connection.downlink} Mbps` : 'Unknown');
+            addInfo('connection-info', 'RTT', navigator.connection.rtt ? `${navigator.connection.rtt} ms` : 'Unknown');
+        } else {
+            addInfo('connection-info', 'Network API', 'Not Supported');
+        }
+
+        if (navigator.getBattery) {
+            navigator.getBattery().then(battery => {
+                const level = Math.round(battery.level * 100) + '%';
+                const charging = battery.charging ? 'Charging' : 'Discharging';
+                addInfo('connection-info', 'Battery', `${level} (${charging})`);
+            });
+        } else {
+            addInfo('connection-info', 'Battery API', 'Not Supported');
+        }
+
+        // 5. Fingerprinting
+        document.getElementById('timezone').textContent = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+        // Canvas Fingerprint
+        try {
+            const canvas = document.getElementById('fingerprint');
+            const ctx = canvas.getContext('2d');
+            ctx.textBaseline = "top";
+            ctx.font = "14px 'Arial'";
+            ctx.textBaseline = "alphabetic";
+            ctx.fillStyle = "#f60";
+            ctx.fillRect(125, 1, 62, 20);
+            ctx.fillStyle = "#069";
+            ctx.fillText("Hello World", 2, 15);
+            ctx.fillStyle = "rgba(102, 204, 0, 0.7)";
+            ctx.fillText("Hello World", 4, 17);
+
+            const dataURI = canvas.toDataURL();
+            // Simple hash function for demo
+            let hash = 0;
+            for (let i = 0; i < dataURI.length; i++) {
+                const char = dataURI.charCodeAt(i);
+                hash = ((hash << 5) - hash) + char;
+                hash = hash & hash;
+            }
+            document.getElementById('canvas-hash').textContent = hash.toString(16);
+        } catch (e) {
+            document.getElementById('canvas-hash').textContent = 'Error';
+        }
+
+        // Window resize listener
+        window.addEventListener('resize', () => {
+            // Ideally update window size here, but for simple demo we leave it static or refresh
+        });
+    </script>
+</body>
+
+</html>
