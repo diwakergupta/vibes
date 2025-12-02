@@ -6,6 +6,7 @@ This repository is a collection of vibe-coded experiments, tools, and demos by [
 
 - [Hello Vibe](./hello-vibe/)
 - [Rubik's Cube Solver](./rubiks-cube/)
+- [Browser Spy](./browser-spy/)
 
 ## Structure
 
