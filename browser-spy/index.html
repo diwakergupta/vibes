@@ -270,18 +270,48 @@
                     <path d="M12 12c-3 0-5.5-2.5-5.5-5.5S9 1 12 1"></path>
                     <path d="M12 12c3 0 5.5 2.5 5.5 5.5S15 23 12 23"></path>
                 </svg>
-                Fingerprint
+                Advanced Fingerprint
             </h2>
             <div id="fingerprint-info">
                 <div class="info-item"><span class="label">Canvas Hash</span><span class="value"
                         id="canvas-hash">Calculating...</span></div>
+                <div class="info-item"><span class="label">Audio Hash</span><span class="value"
+                        id="audio-hash">Calculating...</span></div>
+                <div class="info-item"><span class="label">WebGL Vendor</span><span class="value"
+                        id="webgl-vendor">Unknown</span></div>
+                <div class="info-item"><span class="label">WebGL Renderer</span><span class="value"
+                        id="webgl-renderer">Unknown</span></div>
                 <div class="info-item"><span class="label">Timezone</span><span class="value" id="timezone"></span>
                 </div>
+            </div>
+        </div>
+
+        <!-- System & Fonts -->
+        <div class="card">
+            <h2>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+                    <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+                </svg>
+                System & Fonts
+            </h2>
+            <div id="system-info">
+                <div class="info-item"><span class="label">Installed Fonts (Sample)</span><span class="value"
+                        id="fonts-detected">Scanning...</span></div>
+                <div class="info-item"><span class="label">Autofill Detected</span><span class="value"
+                        id="autofill-status">Checking...</span></div>
             </div>
         </div>
     </div>
 
     <canvas id="fingerprint" width="200" height="50"></canvas>
+
+    <!-- Hidden form for autofill detection -->
+    <div style="opacity: 0; position: absolute; top: -9999px;">
+        <input type="text" id="autofill-name" name="name" autocomplete="name">
+        <input type="email" id="autofill-email" name="email" autocomplete="email">
+    </div>
 
     <script>
         // Helper to create info item
@@ -325,13 +355,20 @@
             try {
                 const canvas = document.createElement('canvas');
                 const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-                if (!gl) return 'Unknown';
+                if (!gl) return { vendor: 'Unknown', renderer: 'Unknown' };
                 const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
-                return debugInfo ? gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) : 'Unknown';
+                return {
+                    vendor: debugInfo ? gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL) : 'Unknown',
+                    renderer: debugInfo ? gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) : 'Unknown'
+                };
             } catch (e) {
-                return 'Unknown';
+                return { vendor: 'Unknown', renderer: 'Unknown' };
             }
         }
+
+        const webglInfo = getRenderer();
+        document.getElementById('webgl-vendor').textContent = webglInfo.vendor;
+        document.getElementById('webgl-renderer').textContent = webglInfo.renderer;
 
         const hardwareInfo = [
             ['Screen Resolution', `${screen.width}x${screen.height}`],
@@ -339,10 +376,22 @@
             ['Pixel Ratio', window.devicePixelRatio],
             ['Color Depth', `${screen.colorDepth}-bit`],
             ['CPU Cores', navigator.hardwareConcurrency || 'Unknown'],
-            ['Device Memory', navigator.deviceMemory ? `${navigator.deviceMemory} GB` : 'Unknown'],
-            ['GPU Renderer', getRenderer()]
+            ['Device Memory', navigator.deviceMemory ? `${navigator.deviceMemory} GB` : 'Unknown']
         ];
         hardwareInfo.forEach(([label, value]) => addInfo('hardware-info', label, value));
+
+        // Media Devices
+        if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+            navigator.mediaDevices.enumerateDevices().then(devices => {
+                const counts = { audioinput: 0, videoinput: 0, audiooutput: 0 };
+                devices.forEach(device => {
+                    if (counts[device.kind] !== undefined) counts[device.kind]++;
+                });
+                addInfo('hardware-info', 'Microphones', counts.audioinput);
+                addInfo('hardware-info', 'Cameras', counts.videoinput);
+                addInfo('hardware-info', 'Speakers', counts.audiooutput);
+            }).catch(e => console.log('Media device enumeration failed', e));
+        }
 
         // 4. Connection & Battery
         if (navigator.connection) {
@@ -392,6 +441,68 @@
         } catch (e) {
             document.getElementById('canvas-hash').textContent = 'Error';
         }
+
+        // Audio Fingerprint
+        try {
+            const audioCtx = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(1, 44100, 44100);
+            const oscillator = audioCtx.createOscillator();
+            oscillator.type = 'triangle';
+            oscillator.frequency.setValueAtTime(10000, audioCtx.currentTime);
+            const compressor = audioCtx.createDynamicsCompressor();
+
+            oscillator.connect(compressor);
+            compressor.connect(audioCtx.destination);
+
+            oscillator.start(0);
+            audioCtx.startRendering().then(buffer => {
+                let hash = 0;
+                for (let i = 0; i < buffer.length; i++) {
+                    const sample = buffer.getChannelData(0)[i];
+                    hash = ((hash << 5) - hash) + sample;
+                    hash = hash & hash;
+                }
+                document.getElementById('audio-hash').textContent = hash.toString(16);
+            });
+        } catch (e) {
+            document.getElementById('audio-hash').textContent = 'Not Supported';
+        }
+
+        // Font Detection
+        const fontList = ['Arial', 'Courier New', 'Georgia', 'Times New Roman', 'Verdana', 'Comic Sans MS', 'Impact', 'Tahoma', 'Trebuchet MS', 'Arial Black'];
+        const detectedFonts = [];
+
+        try {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            const text = "abcdefghijklmnopqrstuvwxyz0123456789";
+
+            ctx.font = "72px monospace";
+            const baselineWidth = ctx.measureText(text).width;
+
+            fontList.forEach(font => {
+                ctx.font = `72px "${font}", monospace`;
+                const width = ctx.measureText(text).width;
+                if (width !== baselineWidth) {
+                    detectedFonts.push(font);
+                }
+            });
+
+            document.getElementById('fonts-detected').textContent = detectedFonts.length > 0 ? detectedFonts.join(', ') : 'None detected (from sample)';
+        } catch (e) {
+            document.getElementById('fonts-detected').textContent = 'Error';
+        }
+
+        // Autofill Detection
+        setTimeout(() => {
+            const name = document.getElementById('autofill-name').value;
+            const email = document.getElementById('autofill-email').value;
+            if (name || email) {
+                document.getElementById('autofill-status').textContent = 'Detected! (Browser tried to fill form)';
+                document.getElementById('autofill-status').style.color = '#ef4444'; // Red warning
+            } else {
+                document.getElementById('autofill-status').textContent = 'None detected';
+            }
+        }, 1000);
 
         // Window resize listener
         window.addEventListener('resize', () => {
