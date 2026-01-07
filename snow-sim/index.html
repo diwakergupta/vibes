@@ -1,0 +1,824 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>High-Fidelity 2D Snow Physics Engine</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #1a1a1a;
+            color: #eee;
+            font-family: sans-serif;
+        }
+        canvas {
+            display: block;
+        }
+        #controls {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 10;
+        }
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            pointer-events: none;
+            text-shadow: 1px 1px 2px black;
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dat-gui/0.7.9/dat.gui.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/stats.js/16/Stats.min.js"></script>
+</head>
+<body>
+    <div id="info">
+        <h1>Snow Physics Engine</h1>
+        <p>LMB: Draw Material | RMB: Erase | Mouse Drag: Wind force</p>
+    </div>
+    <canvas id="simCanvas"></canvas>
+
+    <script>
+        // --- Configuration ---
+        const CONFIG = {
+            gridWidth: 200,
+            gridHeight: 150,
+            simSpeed: 1,
+            gravity: 0.05,
+            windStrength: 0.5,
+            snowDrag: 0.1,
+            snowDensity: 1.0, // Density added per particle
+            maxDensity: 2.0,  // Max density before compression/visual saturation
+            thermalDiffusion: 0.01,
+            meltingPoint: 0.0, // Temperature at which snow melts
+            ambientTemp: -5.0,
+            heaterTemp: 20.0,
+            maxParticles: 8000,
+            brushSize: 3,
+            currentMaterial: 'WALL', // WALL, HEATER, ICE
+            windEnabled: false,
+            showGrid: false,
+            showVelocity: false,
+            subSteps: 2
+        };
+
+        const MAT = {
+            AIR: 0,
+            SNOW: 1,
+            WALL: 2,
+            HEATER: 3,
+            ICE: 4,
+            WATER: 5
+        };
+
+        const COLORS = {
+            [MAT.AIR]: [26, 26, 26],
+            [MAT.SNOW]: [240, 240, 255],
+            [MAT.WALL]: [100, 100, 100],
+            [MAT.HEATER]: [200, 50, 50],
+            [MAT.ICE]: [150, 200, 255],
+            [MAT.WATER]: [50, 100, 200]
+        };
+
+        // --- Data Structures ---
+
+        class Grid {
+            constructor(width, height) {
+                this.width = width;
+                this.height = height;
+                this.size = width * height;
+
+                // Physics Grid
+                this.material = new Uint8Array(this.size);
+                this.density = new Float32Array(this.size);
+                this.temp = new Float32Array(this.size).fill(CONFIG.ambientTemp);
+                this.static = new Uint8Array(this.size); // Optimization: 1 if cell is static obstacle
+
+                // Fluid Grid (Velocity Field)
+                this.u = new Float32Array(this.size);
+                this.v = new Float32Array(this.size);
+                this.u_prev = new Float32Array(this.size);
+                this.v_prev = new Float32Array(this.size);
+                // Temporary arrays for fluid solver
+                this.div = new Float32Array(this.size);
+                this.p = new Float32Array(this.size);
+            }
+
+            idx(x, y) {
+                return Math.max(0, Math.min(this.size - 1, (y | 0) * this.width + (x | 0)));
+            }
+
+            isValid(x, y) {
+                return x >= 0 && x < this.width && y >= 0 && y < this.height;
+            }
+
+            setMaterial(x, y, mat) {
+                if (!this.isValid(x, y)) return;
+                const i = this.idx(x, y);
+                this.material[i] = mat;
+                if (mat === MAT.HEATER) this.temp[i] = CONFIG.heaterTemp;
+                else if (mat === MAT.WALL || mat === MAT.ICE) this.temp[i] = CONFIG.ambientTemp;
+
+                this.static[i] = (mat === MAT.WALL || mat === MAT.HEATER || mat === MAT.ICE) ? 1 : 0;
+
+                if (this.static[i]) {
+                    this.u[i] = 0;
+                    this.v[i] = 0;
+                    this.density[i] = 0; // Obstacles displace snow
+                }
+            }
+        }
+
+        class ParticleSystem {
+            constructor(maxParticles) {
+                this.maxParticles = maxParticles;
+                this.count = 0;
+                // SOA (Structure of Arrays)
+                this.x = new Float32Array(maxParticles);
+                this.y = new Float32Array(maxParticles);
+                this.vx = new Float32Array(maxParticles);
+                this.vy = new Float32Array(maxParticles);
+                this.life = new Float32Array(maxParticles);
+                this.type = new Uint8Array(maxParticles); // SNOW or WATER
+            }
+
+            spawn(x, y, type) {
+                if (this.count >= this.maxParticles) return;
+                const i = this.count++;
+                this.x[i] = x;
+                this.y[i] = y;
+                this.vx[i] = (Math.random() - 0.5) * 0.5;
+                this.vy[i] = (Math.random() * 0.5) + 0.2;
+                this.life[i] = 1.0;
+                this.type[i] = type;
+            }
+
+            remove(i) {
+                if (this.count === 0) return;
+                this.count--;
+                const last = this.count;
+                // Swap with last
+                this.x[i] = this.x[last];
+                this.y[i] = this.y[last];
+                this.vx[i] = this.vx[last];
+                this.vy[i] = this.vy[last];
+                this.life[i] = this.life[last];
+                this.type[i] = this.type[last];
+            }
+        }
+
+        // --- Fluid Solver (Stable Fluids simplified) ---
+        // Adapted for staggered grid or collocated? Using collocated for simplicity in 2D
+
+        const FLUID = {
+            iterations: 4,
+            dt: 0.1,
+            viscosity: 0.0001
+        };
+
+        function solveFluid(grid) {
+            const w = grid.width;
+            const h = grid.height;
+            const size = grid.size;
+
+            // 1. Advect velocity
+            // Semi-Lagrangian advection
+            // To simplify, we'll swap u/u_prev, v/v_prev logic
+            // Copy current to prev
+            grid.u_prev.set(grid.u);
+            grid.v_prev.set(grid.v);
+
+            for (let y = 1; y < h - 1; y++) {
+                for (let x = 1; x < w - 1; x++) {
+                    const i = y * w + x;
+                    if (grid.static[i]) continue;
+
+                    let px = x - grid.u_prev[i] * FLUID.dt;
+                    let py = y - grid.v_prev[i] * FLUID.dt;
+
+                    // Clamp
+                    if (px < 0.5) px = 0.5; if (px > w - 1.5) px = w - 1.5;
+                    if (py < 0.5) py = 0.5; if (py > h - 1.5) py = h - 1.5;
+
+                    // Bilinear interpolation
+                    const x0 = px | 0; const x1 = x0 + 1;
+                    const y0 = py | 0; const y1 = y0 + 1;
+
+                    const s1 = px - x0; const s0 = 1 - s1;
+                    const t1 = py - y0; const t0 = 1 - t1;
+
+                    const i00 = y0 * w + x0;
+                    const i10 = y0 * w + x1;
+                    const i01 = y1 * w + x0;
+                    const i11 = y1 * w + x1;
+
+                    grid.u[i] = s0 * (t0 * grid.u_prev[i00] + t1 * grid.u_prev[i01]) +
+                                s1 * (t0 * grid.u_prev[i10] + t1 * grid.u_prev[i11]);
+
+                    grid.v[i] = s0 * (t0 * grid.v_prev[i00] + t1 * grid.v_prev[i01]) +
+                                s1 * (t0 * grid.v_prev[i10] + t1 * grid.v_prev[i11]);
+                }
+            }
+
+            // 2. Project (make incompressible)
+            // Calculate divergence
+            for (let y = 1; y < h - 1; y++) {
+                for (let x = 1; x < w - 1; x++) {
+                    const i = y * w + x;
+                    if (grid.static[i]) {
+                        grid.div[i] = 0;
+                        grid.p[i] = 0;
+                        continue;
+                    }
+                    grid.div[i] = -0.5 * (
+                        grid.u[i + 1] - grid.u[i - 1] +
+                        grid.v[i + w] - grid.v[i - w]
+                    );
+                    grid.p[i] = 0;
+                }
+            }
+
+            // Jacobi iteration for pressure
+            for (let k = 0; k < FLUID.iterations; k++) {
+                for (let y = 1; y < h - 1; y++) {
+                    for (let x = 1; x < w - 1; x++) {
+                        const i = y * w + x;
+                        if (grid.static[i]) continue;
+
+                        grid.p[i] = (grid.div[i] +
+                            grid.p[i - 1] + grid.p[i + 1] +
+                            grid.p[i - w] + grid.p[i + w]) / 4;
+                    }
+                }
+            }
+
+            // Subtract gradient
+            for (let y = 1; y < h - 1; y++) {
+                for (let x = 1; x < w - 1; x++) {
+                    const i = y * w + x;
+                    if (grid.static[i]) continue;
+
+                    grid.u[i] -= 0.5 * (grid.p[i + 1] - grid.p[i - 1]);
+                    grid.v[i] -= 0.5 * (grid.p[i + w] - grid.p[i - w]);
+                }
+            }
+        }
+
+        // --- Main Simulation Class ---
+
+        class Simulation {
+            constructor() {
+                this.grid = new Grid(CONFIG.gridWidth, CONFIG.gridHeight);
+                this.particles = new ParticleSystem(CONFIG.maxParticles);
+                this.canvas = document.getElementById('simCanvas');
+                this.ctx = this.canvas.getContext('2d', { alpha: false });
+
+                this.resize();
+                window.addEventListener('resize', () => this.resize());
+
+                // Interaction
+                this.mouseDown = false;
+                this.mouseRight = false;
+                this.mouseX = 0;
+                this.mouseY = 0;
+
+                this.canvas.addEventListener('mousedown', e => {
+                    this.mouseDown = true;
+                    this.updateMouse(e);
+                    if (e.button === 2) this.mouseRight = true;
+                });
+                this.canvas.addEventListener('mouseup', e => {
+                    this.mouseDown = false;
+                    this.mouseRight = false;
+                });
+                this.canvas.addEventListener('mousemove', e => this.updateMouse(e));
+                this.canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+                this.initStats();
+                this.initGUI();
+            }
+
+            resize() {
+                this.canvas.width = window.innerWidth;
+                this.canvas.height = window.innerHeight;
+                this.scaleX = this.canvas.width / this.grid.width;
+                this.scaleY = this.canvas.height / this.grid.height;
+            }
+
+            updateMouse(e) {
+                const rect = this.canvas.getBoundingClientRect();
+                this.mouseX = (e.clientX - rect.left) / this.scaleX;
+                this.mouseY = (e.clientY - rect.top) / this.scaleY;
+            }
+
+            initStats() {
+                this.stats = new Stats();
+                this.stats.showPanel(0);
+                document.body.appendChild(this.stats.dom);
+            }
+
+            initGUI() {
+                const gui = new dat.GUI({ autoPlace: false });
+                document.getElementById('controls').appendChild(gui.domElement);
+
+                gui.add(CONFIG, 'windStrength', 0, 2).name('Wind Strength');
+                gui.add(CONFIG, 'gravity', 0.01, 0.2).name('Gravity');
+                gui.add(CONFIG, 'ambientTemp', -20, 10).name('Ambient Temp');
+                gui.add(CONFIG, 'currentMaterial', ['WALL', 'HEATER', 'ICE']).name('Brush Material');
+                gui.add(CONFIG, 'windEnabled').name('Wind Emitter (Mouse)');
+                gui.add(CONFIG, 'brushSize', 1, 10).name('Brush Size');
+                gui.add(CONFIG, 'showGrid').name('Debug Grid');
+                gui.add(CONFIG, 'showVelocity').name('Show Wind');
+
+                gui.add({ clear: () => this.reset() }, 'clear').name('Clear World');
+            }
+
+            reset() {
+                this.grid = new Grid(CONFIG.gridWidth, CONFIG.gridHeight);
+                this.particles.count = 0;
+            }
+
+            step() {
+                // 1. User Interaction
+                if (this.mouseDown) {
+                    if (CONFIG.windEnabled) {
+                        this.applyWindForce();
+                    } else {
+                        this.paintMaterial(this.mouseRight ? MAT.AIR : MAT[CONFIG.currentMaterial]);
+                    }
+                }
+
+                // 2. Spawn Particles
+                // Continuous snow at top
+                if (this.particles.count < CONFIG.maxParticles - 10) {
+                    for(let i=0; i<3; i++) {
+                        this.particles.spawn(Math.random() * this.grid.width, 0, MAT.SNOW);
+                    }
+                }
+
+                for (let s = 0; s < CONFIG.subSteps; s++) {
+                    // 3. Fluid Update
+                    solveFluid(this.grid);
+
+                    // 4. Particle Update
+                    this.updateParticles();
+
+                    // 5. Grid/Snowpack Update
+                    this.updateGrid();
+                }
+            }
+
+            applyWindForce() {
+                const r = CONFIG.brushSize * 2;
+                const cx = this.mouseX | 0;
+                const cy = this.mouseY | 0;
+
+                for(let y = cy - r; y <= cy + r; y++) {
+                    for(let x = cx - r; x <= cx + r; x++) {
+                        if (this.grid.isValid(x, y)) {
+                            const i = this.grid.idx(x, y);
+                            this.grid.u[i] += CONFIG.windStrength * 2.0;
+                            this.grid.v[i] += (Math.random() - 0.5) * CONFIG.windStrength;
+                        }
+                    }
+                }
+            }
+
+            paintMaterial(mat) {
+                const r = CONFIG.brushSize;
+                const cx = this.mouseX | 0;
+                const cy = this.mouseY | 0;
+
+                for(let y = cy - r; y <= cy + r; y++) {
+                    for(let x = cx - r; x <= cx + r; x++) {
+                        if (x*x + y*y > r*r + 1) continue;
+                        const dx = x - cx; const dy = y - cy;
+                        if (dx*dx + dy*dy <= r*r) {
+                            this.grid.setMaterial(x, y, mat);
+                        }
+                    }
+                }
+            }
+
+            updateParticles() {
+                const g = this.grid;
+                const p = this.particles;
+                const w = g.width;
+                const h = g.height;
+
+                for (let i = 0; i < p.count; i++) {
+                    const x = p.x[i];
+                    const y = p.y[i];
+                    const ix = x | 0;
+                    const iy = y | 0;
+                    const idx = iy * w + ix;
+
+                    let wu = 0, wv = 0;
+                    if (g.isValid(ix, iy)) {
+                        wu = g.u[idx];
+                        wv = g.v[idx];
+                    }
+
+                    // Forces
+                    let ax = 0, ay = 0;
+
+                    // Wind Drag
+                    ax += (wu - p.vx[i]) * CONFIG.snowDrag;
+                    ay += (wv - p.vy[i]) * CONFIG.snowDrag;
+
+                    // Gravity
+                    ay += CONFIG.gravity;
+
+                    p.vx[i] += ax;
+                    p.vy[i] += ay;
+
+                    p.x[i] += p.vx[i];
+                    p.y[i] += p.vy[i];
+
+                    // Boundary checks
+                    if (p.x[i] < 0 || p.x[i] >= w || p.y[i] >= h) {
+                        p.remove(i);
+                        i--;
+                        continue;
+                    }
+
+                    // Collision with Grid
+                    const nix = p.x[i] | 0;
+                    const niy = p.y[i] | 0;
+
+                    if (!g.isValid(nix, niy)) continue;
+
+                    const nidx = g.idx(nix, niy);
+                    const cellDensity = g.density[nidx];
+
+                    // Hit something solid or dense snow
+                    if (g.static[nidx] || cellDensity > 0.8) {
+                        if (p.type[i] === MAT.SNOW) {
+                            if (g.temp[nidx] > CONFIG.meltingPoint) {
+                                // Melt
+                                p.type[i] = MAT.WATER;
+                                p.vx[i] *= 0.5;
+                                p.vy[i] *= -0.3;
+                                p.y[i] = niy - 1;
+                            } else {
+                                // Accumulate
+                                let targetIdx = nidx;
+                                if (g.static[nidx]) {
+                                    const pix = (p.x[i] - p.vx[i]) | 0;
+                                    const piy = (p.y[i] - p.vy[i]) | 0;
+                                    if (g.isValid(pix, piy)) {
+                                        targetIdx = g.idx(pix, piy);
+                                    }
+                                }
+
+                                g.density[targetIdx] += 0.2;
+                                if (g.material[targetIdx] === MAT.AIR) g.material[targetIdx] = MAT.SNOW;
+
+                                p.remove(i);
+                                i--;
+                            }
+                        } else if (p.type[i] === MAT.WATER) {
+                             if (g.temp[nidx] < CONFIG.meltingPoint - 2) {
+                                 // Freeze
+                                 g.setMaterial(nix, niy, MAT.ICE);
+                                 p.remove(i);
+                                 i--;
+                             } else {
+                                // Slide
+                                p.x[i] -= p.vx[i];
+                                p.y[i] -= p.vy[i];
+                                p.vx[i] *= 0.8;
+                                p.vy[i] *= -0.5;
+                                p.vx[i] += (Math.random()-0.5);
+                             }
+                        }
+                    }
+                }
+            }
+
+            updateGrid() {
+                const g = this.grid;
+                const w = g.width;
+                const h = g.height;
+                const cnt = w * h;
+
+                // 1. Thermodynamics
+                for (let i = 0; i < cnt; i++) {
+                    const x = i % w;
+                    const y = (i / w) | 0;
+
+                    if (g.material[i] === MAT.HEATER) {
+                        g.temp[i] = CONFIG.heaterTemp;
+                    } else if (g.material[i] === MAT.WALL) {
+                    } else {
+                        g.temp[i] += (CONFIG.ambientTemp - g.temp[i]) * 0.01;
+                    }
+
+                    if (x > 0) this.diffuseHeat(i, i-1);
+                    if (x < w-1) this.diffuseHeat(i, i+1);
+                    if (y > 0) this.diffuseHeat(i, i-w);
+                    if (y < h-1) this.diffuseHeat(i, i+w);
+                }
+
+                // 2. Snow Physics
+                for (let y = h - 2; y >= 0; y--) {
+                    const startX = Math.random() > 0.5 ? 0 : w-1;
+                    const endX = startX === 0 ? w : -1;
+                    const stepX = startX === 0 ? 1 : -1;
+
+                    for (let x = startX; x !== endX; x += stepX) {
+                        const i = y * w + x;
+
+                        if (g.density[i] <= 0) continue;
+
+                        if (g.temp[i] > CONFIG.meltingPoint) {
+                            g.density[i] -= 0.05;
+                            if (Math.random() < 0.1) {
+                                this.particles.spawn(x, y, MAT.WATER);
+                            }
+                            if (g.density[i] <= 0) {
+                                g.density[i] = 0;
+                                g.material[i] = MAT.AIR;
+                            }
+                        }
+
+                        const below = i + w;
+                        if (!g.static[below]) {
+                            if (g.density[below] < g.density[i]) {
+                                const amount = Math.min(g.density[i], (g.density[i] - g.density[below]) * 0.5);
+                                g.density[below] += amount;
+                                g.density[i] -= amount;
+                                if (g.density[below] > 0.1 && g.material[below] === MAT.AIR) g.material[below] = MAT.SNOW;
+                            } else {
+                                const left = i + w - 1;
+                                const right = i + w + 1;
+                                let moved = false;
+
+                                if (x > 0 && !g.static[left] && g.density[left] < g.density[i] - 1.0) {
+                                    const amount = 0.2;
+                                    g.density[left] += amount;
+                                    g.density[i] -= amount;
+                                    if (g.material[left] === MAT.AIR) g.material[left] = MAT.SNOW;
+                                    moved = true;
+                                }
+                                if (!moved && x < w - 1 && !g.static[right] && g.density[right] < g.density[i] - 1.0) {
+                                    const amount = 0.2;
+                                    g.density[right] += amount;
+                                    g.density[i] -= amount;
+                                    if (g.material[right] === MAT.AIR) g.material[right] = MAT.SNOW;
+                                }
+                            }
+                        }
+
+                        if (g.density[i] <= 0.01) {
+                            g.density[i] = 0;
+                            g.material[i] = MAT.AIR;
+                        }
+                    }
+                }
+            }
+
+            diffuseHeat(i1, i2) {
+                const diff = (this.grid.temp[i1] - this.grid.temp[i2]) * CONFIG.thermalDiffusion;
+                this.grid.temp[i1] -= diff;
+                this.grid.temp[i2] += diff;
+            }
+
+            draw() {
+                this.ctx.fillStyle = '#1a1a1a';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+                const sx = this.scaleX;
+                const sy = this.scaleY;
+
+                // 1. Draw Static / Background
+                this.ctx.lineWidth = 1;
+                for (let y = 0; y < this.grid.height; y++) {
+                    for (let x = 0; x < this.grid.width; x++) {
+                        const i = this.grid.idx(x, y);
+                        const mat = this.grid.material[i];
+
+                        if (mat === MAT.WALL || mat === MAT.HEATER || mat === MAT.ICE) {
+                            this.ctx.fillStyle = `rgb(${COLORS[mat].join(',')})`;
+                            this.ctx.fillRect(x * sx, y * sy, sx, sy);
+                        }
+
+                        if (CONFIG.showVelocity) {
+                            if (Math.abs(this.grid.u[i]) > 0.1 || Math.abs(this.grid.v[i]) > 0.1) {
+                                this.ctx.strokeStyle = 'rgba(0,255,0,0.3)';
+                                this.ctx.beginPath();
+                                this.ctx.moveTo(x*sx + sx/2, y*sy + sy/2);
+                                this.ctx.lineTo(x*sx + sx/2 + this.grid.u[i]*10, y*sy + sy/2 + this.grid.v[i]*10);
+                                this.ctx.stroke();
+                            }
+                        }
+                    }
+                }
+
+                // 2. Marching Squares for Snow Surface
+                this.ctx.fillStyle = 'white';
+
+                // We'll traverse the grid and draw shapes based on density threshold
+                // Threshold = 0.5
+                // Marching squares 16 cases.
+
+                const threshold = 0.5;
+                const stepX = sx;
+                const stepY = sy;
+
+                this.ctx.beginPath();
+                this.ctx.fillStyle = '#f0f0ff';
+
+                // Loop through squares
+                for (let y = 0; y < this.grid.height - 1; y++) {
+                    for (let x = 0; x < this.grid.width - 1; x++) {
+                        const i = y * this.grid.width + x;
+
+                        const val0 = this.grid.density[i];
+                        const val1 = this.grid.density[i+1];
+                        const val2 = this.grid.density[i+this.grid.width+1];
+                        const val3 = this.grid.density[i+this.grid.width];
+
+                        // Bitmask
+                        const b0 = val0 > threshold ? 1 : 0;
+                        const b1 = val1 > threshold ? 2 : 0;
+                        const b2 = val2 > threshold ? 4 : 0;
+                        const b3 = val3 > threshold ? 8 : 0;
+
+                        const caseId = b0 | b1 | b2 | b3;
+
+                        if (caseId === 0) continue;
+                        if (caseId === 15) {
+                            // Full block
+                            this.ctx.rect(x * sx, y * sy, sx, sy);
+                            continue;
+                        }
+
+                        // Screen coords for corners
+                        const x0 = x * sx;
+                        const y0 = y * sy;
+                        const x1 = (x+1) * sx;
+                        const y1 = (y+1) * sy;
+
+                        // Midpoints (Linearly interpolated ideally, but mid is fine for now)
+                        // Vertical edges
+                        const mx0 = x0; // left
+                        const mx1 = x1; // right
+
+                        // Horizontal edges
+                        const my0 = y0; // top
+                        const my1 = y1; // bottom
+
+                        // Interpolated points
+                        // Top edge (between 0 and 1)
+                        const tx = x0 + sx * ((threshold - val0) / (val1 - val0));
+                        // Right edge (between 1 and 2)
+                        const ry = y0 + sy * ((threshold - val1) / (val2 - val1));
+                        // Bottom edge (between 3 and 2)
+                        const bx = x0 + sx * ((threshold - val3) / (val2 - val3));
+                        // Left edge (between 0 and 3)
+                        const ly = y0 + sy * ((threshold - val0) / (val3 - val0));
+
+                        // Clamp (safety)
+                        const safeTx = isNaN(tx) ? x0 + sx*0.5 : tx;
+                        const safeRy = isNaN(ry) ? y0 + sy*0.5 : ry;
+                        const safeBx = isNaN(bx) ? x0 + sx*0.5 : bx;
+                        const safeLy = isNaN(ly) ? y0 + sy*0.5 : ly;
+
+                        this.ctx.moveTo(safeTx, y0); // Start path somewhere?
+                        // Actually easier to just draw polygons per case
+
+                        // Wait, filling complex paths is tricky if not connected.
+                        // We can draw individual polygons for each cell.
+
+                        // Helper to fill
+                        const poly = (pts) => {
+                            this.ctx.moveTo(pts[0][0], pts[0][1]);
+                            for(let k=1; k<pts.length; k++) this.ctx.lineTo(pts[k][0], pts[k][1]);
+                            this.ctx.lineTo(pts[0][0], pts[0][1]);
+                        };
+
+                        // Cases
+                        switch(caseId) {
+                            case 1: poly([[safeLy, y1], [x0, y1], [x0, y0], [safeTx, y0]]); break; // TL (flipped index logic? 0 is TL)
+                            // 0 is TL, 1 is TR, 2 is BR, 3 is BL in my density loop indices
+                            // val0(TL), val1(TR), val2(BR), val3(BL)
+                            // b0(1), b1(2), b2(4), b3(8)
+
+                            // Case 1: TL only
+                            // Triangle? No, polygon depends on which side is "inside".
+                            // If > threshold is "inside" (snow)
+                            // 0 is snow.
+                            // Draw the snow part.
+                            // TL corner: (x0, y0)
+                            // Edge intersects: Top (safeTx, y0), Left (x0, safeLy)
+                            case 1: poly([[x0, y0], [safeTx, y0], [x0, safeLy]]); break;
+
+                            case 2: poly([[safeTx, y0], [x1, y0], [x1, safeRy]]); break; // TR
+
+                            case 3: poly([[x0, y0], [x1, y0], [x1, safeRy], [x0, safeLy]]); break; // TL + TR
+
+                            case 4: poly([[safeBx, y1], [x1, y1], [x1, safeRy]]); break; // BR
+
+                            case 5: poly([[x0, y0], [safeTx, y0], [x1, safeRy], [x1, y1], [safeBx, y1], [x0, safeLy]]); break; // TL + BR (saddle?)
+
+                            case 6: poly([[safeTx, y0], [x1, y0], [x1, y1], [safeBx, y1]]); break; // TR + BR
+
+                            case 7: poly([[x0, y0], [x1, y0], [x1, y1], [safeBx, y1], [x0, safeLy]]); break; // All except BL
+
+                            case 8: poly([[x0, safeLy], [safeBx, y1], [x0, y1]]); break; // BL
+
+                            case 9: poly([[x0, y0], [safeTx, y0], [safeBx, y1], [x0, y1]]); break; // TL + BL
+
+                            case 10: poly([[safeTx, y0], [x1, y0], [x1, safeRy], [safeBx, y1], [x0, y1], [x0, safeLy]]); break; // TR + BL (saddle)
+
+                            case 11: poly([[x0, y0], [x1, y0], [x1, safeRy], [safeBx, y1], [x0, y1]]); break; // All except BR
+
+                            case 12: poly([[x0, safeLy], [x1, safeRy], [x1, y1], [x0, y1]]); break; // BL + BR
+
+                            case 13: poly([[x0, y0], [safeTx, y0], [x1, safeRy], [x1, y1], [x0, y1]]); break; // All except BR ... wait duplicate?
+                            // 11 was All except BR (4). 13 is All except TR (2).
+                            // 13: TL(1)+BR(4)+BL(8) = 13. Excludes TR(2).
+                            // Polygon: TL(0,0), TopIntersect, RightIntersect(No), BottomIntersect, BL, LeftIntersect(No)
+                            // Vertices: (x0, y0), (safeTx, y0), (x1, safeRy)?? NO.
+                            // Excludes TR. Cut off TR corner.
+                            // (x0, y0) -> (safeTx, y0) -> (x1, safeRy) -> (x1, y1) -> (x0, y1) -> close
+                            // Cut line is safeTx, y0 to x1, safeRy
+                            // Vertices: (x0, y0), (safeTx, y0), (x1, safeRy), (x1, y1), (x0, y1)
+                             poly([[x0, y0], [safeTx, y0], [x1, safeRy], [x1, y1], [x0, y1]]); break;
+
+                            case 14: poly([[safeTx, y0], [x1, y0], [x1, y1], [x0, y1], [x0, safeLy]]); break; // All except TL
+                        }
+                    }
+                }
+                this.ctx.fill();
+
+                // Lighting / Shading
+                // Simple normal approximation via density gradient
+                const imgData = this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height);
+                const data = imgData.data;
+
+                // This is slow in JS for full canvas.
+                // Alternative: Draw a second pass with gradient overlay?
+                // Or just keep the flat look for now as "Marching Squares" satisfies the contouring requirement.
+                // The prompt asked for "2D normal mapping... to simulate sunlight".
+
+                // We can compute normals on the grid and draw a shadow overlay.
+                this.ctx.fillStyle = 'rgba(0,0,0,0.1)';
+                for (let y = 0; y < this.grid.height - 1; y++) {
+                    for (let x = 0; x < this.grid.width - 1; x++) {
+                        const i = y * this.grid.width + x;
+                        if (this.grid.density[i] > 0.1) {
+                            // Gradient
+                            const dx = this.grid.density[i+1] - this.grid.density[i];
+                            const dy = this.grid.density[i+this.grid.width] - this.grid.density[i];
+
+                            // Light source top-left (-1, -1)
+                            // Normal roughly (-dx, -dy, 1)
+                            // Dot product
+                            const dot = -dx - dy;
+
+                            if (dot < -0.1) {
+                                this.ctx.fillStyle = `rgba(0,0,0,${Math.min(0.3, -dot)})`;
+                                this.ctx.fillRect(x*sx, y*sy, sx, sy);
+                            } else if (dot > 0.1) {
+                                this.ctx.fillStyle = `rgba(255,255,255,${Math.min(0.3, dot)})`;
+                                this.ctx.fillRect(x*sx, y*sy, sx, sy);
+                            }
+                        }
+                    }
+                }
+
+                // 3. Draw Particles
+                this.ctx.fillStyle = 'white';
+                for (let i = 0; i < this.particles.count; i++) {
+                    if (this.particles.type[i] === MAT.SNOW) {
+                        this.ctx.fillStyle = 'white';
+                        this.ctx.fillRect(this.particles.x[i] * sx, this.particles.y[i] * sy, 2, 2);
+                    } else {
+                        this.ctx.fillStyle = 'rgb(100, 150, 255)';
+                        this.ctx.fillRect(this.particles.x[i] * sx, this.particles.y[i] * sy, 3, 3);
+                    }
+                }
+            }
+
+            loop() {
+                this.stats.begin();
+                this.step();
+                this.draw();
+                this.stats.end();
+                requestAnimationFrame(() => this.loop());
+            }
+        }
+
+        // --- Start ---
+        window.onload = () => {
+            const sim = new Simulation();
+            sim.loop();
+        };
+
+    </script>
+    <div id="controls"></div>
+</body>
+</html>
