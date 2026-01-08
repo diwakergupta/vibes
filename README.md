@@ -8,6 +8,7 @@ This repository is a collection of vibe-coded experiments, tools, and demos by [
 - [Rubik's Cube Solver](./rubiks-cube/)
 - [Browser Spy](./browser-spy/)
 - [Recycling Infographic](./recycling-infographic/)
+- [Snow Physics Engine](./snow-physics/)
 
 ## Structure
 

@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Snow Physics Engine</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #0f111a;
+            color: #ffffff;
+            font-family: 'Inter', sans-serif;
+        }
+
+        canvas {
+            display: block;
+        }
+
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(15, 17, 26, 0.85);
+            padding: 20px;
+            border-radius: 12px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            user-select: none;
+        }
+
+        h1 {
+            font-size: 18px;
+            margin: 0 0 15px 0;
+            font-weight: 600;
+            color: #e0e6ed;
+        }
+
+        .control-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            font-size: 12px;
+            margin-bottom: 5px;
+            color: #94a3b8;
+        }
+
+        select,
+        button {
+            background: #1e293b;
+            color: white;
+            border: 1px solid #334155;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            width: 100%;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        select:hover,
+        button:hover {
+            border-color: #475569;
+            background: #253045;
+        }
+
+        button.active {
+            background: #3b82f6;
+            border-color: #2563eb;
+        }
+
+        .status {
+            font-size: 11px;
+            color: #64748b;
+            margin-top: 20px;
+            border-top: 1px solid #334155;
+            padding-top: 10px;
+        }
+    </style>
+</head>
+
+<body>
+    <canvas id="simCanvas"></canvas>
+    <div id="ui">
+        <h1>Snow Engine</h1>
+
+        <div class="control-group">
+            <label>Tool</label>
+            <select id="toolSelect">
+                <option value="wind">Wind Emitter</option>
+                <option value="wall">Obstacle (Wall)</option>
+                <option value="heat">Heater (Melt)</option>
+            </select>
+        </div>
+
+        <div class="control-group">
+            <button id="resetBtn">Reset Simulation</button>
+        </div>
+
+        <div class="control-group">
+            <label>Debug View</label>
+            <button id="debugToggle">Toggle Physics Overlay</button>
+        </div>
+
+        <div class="status" id="statusPanel">
+            FPS: <span id="fpsDisplay">0</span><br>
+            Particles: <span id="particleCount">0</span>
+        </div>
+    </div>
+
+    <script type="module" src="./src/main.js"></script>
+</body>
+
+</html>
