@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ErgoCoach - Real-time Ergonomics Feedback</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- TensorFlow.js -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .monitor-ring { transition: all 0.3s ease; }
+    </style>
+</head>
+<body class="bg-slate-900 text-white min-h-screen flex flex-col">
+
+    <!-- Header -->
+    <header class="p-4 bg-slate-800 border-b border-slate-700 flex justify-between items-center">
+        <div class="flex items-center gap-2">
+            <span class="text-2xl">🧘</span>
+            <h1 class="text-xl font-bold tracking-tight">ErgoCoach</h1>
+        </div>
+        <div class="text-sm text-slate-400">
+            Client-side processing • Privacy first
+        </div>
+    </header>
+
+    <main class="flex-grow p-4 md:p-8 flex flex-col md:flex-row gap-6 max-w-7xl mx-auto w-full">
+        
+        <!-- Video Feed Section -->
+        <div class="flex-1 relative bg-black rounded-2xl overflow-hidden shadow-2xl border border-slate-700 aspect-video md:aspect-auto flex items-center justify-center group">
+            <video id="webcam" class="absolute inset-0 w-full h-full object-contain opacity-60 transform scale-x-[-1]" playsinline autoplay></video>
+            <canvas id="output" class="absolute inset-0 w-full h-full object-contain transform scale-x-[-1]"></canvas>
+            
+            <!-- Loading State -->
+            <div id="loader" class="absolute inset-0 flex flex-col items-center justify-center bg-slate-900/90 z-20">
+                <div class="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+                <p class="text-blue-400 font-medium animate-pulse">Initializing AI Model...</p>
+                <p class="text-slate-500 text-sm mt-2">Please allow camera access</p>
+            </div>
+
+            <!-- Start Button Overlay -->
+            <div id="startOverlay" class="absolute inset-0 flex items-center justify-center bg-slate-900/80 z-30 hidden">
+                <button id="startBtn" class="bg-blue-600 hover:bg-blue-500 text-white px-8 py-3 rounded-full font-bold transition-all transform hover:scale-105 shadow-lg shadow-blue-900/50">
+                    Start Camera
+                </button>
+            </div>
+        </div>
+
+        <!-- Feedback Panel -->
+        <div class="w-full md:w-96 flex flex-col gap-4">
+            
+            <!-- Overall Status -->
+            <div class="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-lg">
+                <h2 class="text-sm uppercase tracking-wider text-slate-400 font-semibold mb-2">Posture Status</h2>
+                <div id="mainStatus" class="text-3xl font-bold text-yellow-500 transition-colors">
+                    Waiting...
+                </div>
+                <p id="mainAdvice" class="text-slate-300 mt-2 text-sm leading-relaxed">
+                    Click "Start Camera" to begin analysis.
+                </p>
+            </div>
+
+            <!-- Metrics Grid -->
+            <div class="grid grid-cols-1 gap-3">
+                <!-- Head Tilt (Roll) -->
+                <div class="bg-slate-800/50 p-4 rounded-lg border border-slate-700/50 flex items-center justify-between">
+                    <div>
+                        <div class="text-xs text-slate-400 uppercase font-semibold">Head Tilt</div>
+                        <div id="tiltValue" class="text-lg font-mono text-slate-300">--°</div>
+                    </div>
+                    <div id="tiltIndicator" class="w-3 h-3 rounded-full bg-slate-600"></div>
+                </div>
+
+                <!-- Head Pitch (Looking Down) -->
+                <div class="bg-slate-800/50 p-4 rounded-lg border border-slate-700/50 flex items-center justify-between">
+                    <div>
+                        <div class="text-xs text-slate-400 uppercase font-semibold">Head Pitch</div>
+                        <div id="pitchValue" class="text-lg font-mono text-slate-300">--</div>
+                    </div>
+                    <div id="pitchIndicator" class="w-3 h-3 rounded-full bg-slate-600"></div>
+                </div>
+
+                <!-- Distance -->
+                <div class="bg-slate-800/50 p-4 rounded-lg border border-slate-700/50 flex items-center justify-between">
+                    <div>
+                        <div class="text-xs text-slate-400 uppercase font-semibold">Screen Distance</div>
+                        <div id="distValue" class="text-lg font-mono text-slate-300">--</div>
+                    </div>
+                    <div id="distIndicator" class="w-3 h-3 rounded-full bg-slate-600"></div>
+                </div>
+
+                <!-- Shoulders -->
+                <div class="bg-slate-800/50 p-4 rounded-lg border border-slate-700/50 flex items-center justify-between">
+                    <div>
+                        <div class="text-xs text-slate-400 uppercase font-semibold">Shoulder Level</div>
+                        <div id="shoulderValue" class="text-lg font-mono text-slate-300">--°</div>
+                    </div>
+                    <div id="shoulderIndicator" class="w-3 h-3 rounded-full bg-slate-600"></div>
+                </div>
+            </div>
+
+            <!-- Calibration Info -->
+            <div class="mt-auto p-4 bg-blue-900/20 border border-blue-900/50 rounded-lg">
+                <h3 class="text-blue-400 font-bold text-sm mb-1">💡 Tips</h3>
+                <ul id="tipsList" class="text-xs text-blue-200/70 space-y-1 list-disc list-inside">
+                    <li>Position camera at eye level</li>
+                    <li>Sit centered in the frame</li>
+                    <li>Ensure good lighting on your face</li>
+                </ul>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        const video = document.getElementById('webcam');
+        const canvas = document.getElementById('output');
+        const ctx = canvas.getContext('2d');
+        const loader = document.getElementById('loader');
+        const startBtn = document.getElementById('startBtn');
+        const startOverlay = document.getElementById('startOverlay');
+        
+        let detector;
+        let isRunning = false;
+        let rafId;
+
+        // Configuration
+        const CONF = {
+            maxTilt: 12,       // Degrees - Relaxed even more
+            maxShoulderTilt: 12, // Degrees - Relaxed even more
+            idealDistRatio: 0.3, // Shoulder width relative to frame width (rough proxy)
+            smoothingAlpha: 0.2, // Exponential Moving Average alpha (lower = smoother)
+            // Head pitch: ratio of (nose Y below eye midpoint) / (eye distance)
+            // Normal upright ~0.5-0.7, looking down increases this
+            maxPitchRatio: 0.85  // Threshold for "looking down too much"
+        };
+
+        // State for smoothing
+        let smoothTilt = 0;
+        let smoothShoulder = 0;
+        let smoothPitch = 0;
+        let isFirstFrame = true;
+
+        async function init() {
+            try {
+                // Initialize detector
+                const model = poseDetection.SupportedModels.MoveNet;
+                const detectorConfig = {
+                    modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING
+                };
+                detector = await poseDetection.createDetector(model, detectorConfig);
+                
+                loader.classList.add('hidden');
+                startOverlay.classList.remove('hidden');
+                
+                startBtn.addEventListener('click', startCamera);
+            } catch (err) {
+                console.error(err);
+                alert("Failed to load AI model. Please check console.");
+            }
+        }
+
+        async function startCamera() {
+            startOverlay.classList.add('hidden');
+            
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { width: 640, height: 480 } 
+                });
+                video.srcObject = stream;
+                
+                // Camera Type Detection
+                const track = stream.getVideoTracks()[0];
+                const label = track.label.toLowerCase();
+                const isLaptop = label.includes('facetime') || label.includes('built-in') || label.includes('integrated') || label.includes('internal');
+                
+                updateCameraContext(isLaptop);
+                
+                await new Promise((resolve) => {
+                    video.onloadedmetadata = () => {
+                        resolve(video);
+                    };
+                });
+                
+                video.play();
+                
+                // Match canvas size to video
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                
+                isRunning = true;
+                detect();
+            } catch (err) {
+                console.error(err);
+                alert("Camera access denied or failed.");
+                startOverlay.classList.remove('hidden');
+            }
+        }
+
+        async function detect() {
+            if (!isRunning) return;
+
+            const poses = await detector.estimatePoses(video);
+            
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            if (poses.length > 0) {
+                const pose = poses[0];
+                const analysis = analyzePosture(pose.keypoints);
+                drawSkeleton(pose.keypoints, analysis);
+            } else {
+                updateStatus("No person detected", "neutral");
+            }
+
+            rafId = requestAnimationFrame(detect);
+        }
+
+        function drawSkeleton(keypoints, analysis) {
+            // Draw dots
+            keypoints.forEach(point => {
+                if (point.score > 0.3) {
+                    ctx.beginPath();
+                    ctx.arc(point.x, point.y, 4, 0, 2 * Math.PI);
+                    ctx.fillStyle = '#60A5FA'; // Blue 400
+                    ctx.fill();
+                }
+            });
+            
+            // Connect keypoints with color coding
+            const connections = [
+                ['nose', 'left_eye'], ['nose', 'right_eye'],
+                ['left_eye', 'left_ear'], ['right_eye', 'right_ear'],
+                ['left_shoulder', 'right_shoulder']
+            ];
+
+            const pointsMap = keypoints.reduce((acc, kp) => {
+                acc[kp.name] = kp;
+                return acc;
+            }, {});
+
+            ctx.lineWidth = 2;
+
+            connections.forEach(([p1, p2]) => {
+                const kp1 = pointsMap[p1];
+                const kp2 = pointsMap[p2];
+
+                if (kp1 && kp2 && kp1.score > 0.3 && kp2.score > 0.3) {
+                    ctx.beginPath();
+                    ctx.moveTo(kp1.x, kp1.y);
+                    ctx.lineTo(kp2.x, kp2.y);
+                    
+                    // Color code specific connections based on analysis
+                    if (p1 === 'left_shoulder' && p2 === 'right_shoulder') {
+                        ctx.strokeStyle = analysis && analysis.shoulder.isGood ? '#4ADE80' : '#EF4444';
+                    } else if (p1.includes('eye') || p2.includes('eye')) {
+                        ctx.strokeStyle = analysis && analysis.tilt.isGood ? '#4ADE80' : '#EF4444';
+                    } else {
+                        ctx.strokeStyle = '#3B82F6';
+                    }
+                    
+                    ctx.stroke();
+                }
+            });
+
+            // Draw Guidance Overlays
+            if (analysis) {
+                drawGuidance(analysis, pointsMap);
+            }
+        }
+
+        function drawGuidance(analysis, points) {
+            ctx.font = "bold 16px Inter, sans-serif";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+
+            // Helper to draw text that isn't mirrored
+            // Since the canvas is flipped via CSS scale-x-[-1], we must flip text back
+            // Text drawn at (x, y) should be drawn at (-x, y) with a scale(-1, 1) context
+            const drawText = (text, x, y, color = "white", font) => {
+                ctx.save();
+                ctx.translate(x, y);
+                ctx.scale(-1, 1);
+                ctx.fillStyle = color;
+                if (font) ctx.font = font;
+                ctx.fillText(text, 0, 0);
+                ctx.restore();
+            };
+
+            // Head Tilt Guidance (Roll)
+            if (!analysis.tilt.isGood && points.nose) {
+                const nose = points.nose;
+                ctx.save();
+                ctx.translate(nose.x, nose.y - 50);
+
+                // Draw target horizontal line (Green)
+                ctx.beginPath();
+                ctx.moveTo(-40, 0);
+                ctx.lineTo(40, 0);
+                ctx.strokeStyle = "rgba(74, 222, 128, 0.8)"; // Green
+                ctx.lineWidth = 2;
+                ctx.setLineDash([5, 3]);
+                ctx.stroke();
+
+                // Draw arrow
+                const angle = analysis.tilt.value; // degrees
+                const dir = angle > 0 ? "⟲" : "⟳"; // Rotate Left vs Right
+
+                drawText(dir, 0, -10, "#EF4444", "32px sans-serif");
+                drawText("Level Head", 0, 20, "white", "12px sans-serif");
+
+                ctx.restore();
+            }
+
+            // Head Pitch Guidance (Looking Down)
+            if (!analysis.pitch.isGood && points.nose && points.left_eye && points.right_eye) {
+                const eyeMidX = (points.left_eye.x + points.right_eye.x) / 2;
+                const eyeMidY = (points.left_eye.y + points.right_eye.y) / 2;
+
+                ctx.save();
+                ctx.translate(eyeMidX, eyeMidY - 60);
+
+                // Draw upward arrow
+                ctx.beginPath();
+                ctx.moveTo(0, 20);
+                ctx.lineTo(0, -10);
+                ctx.lineTo(-8, 0);
+                ctx.moveTo(0, -10);
+                ctx.lineTo(8, 0);
+                ctx.strokeStyle = "#EF4444";
+                ctx.lineWidth = 3;
+                ctx.setLineDash([]);
+                ctx.stroke();
+
+                drawText("Raise Head", 0, 35, "#EF4444", "bold 14px sans-serif");
+
+                ctx.restore();
+            }
+
+            // Shoulder Guidance
+            if (!analysis.shoulder.isGood && points.left_shoulder && points.right_shoulder) {
+                const midX = (points.left_shoulder.x + points.right_shoulder.x) / 2;
+                const midY = (points.left_shoulder.y + points.right_shoulder.y) / 2;
+
+                ctx.save();
+                ctx.translate(midX, midY);
+
+                // Target line
+                ctx.beginPath();
+                ctx.moveTo(-60, 0);
+                ctx.lineTo(60, 0);
+                ctx.strokeStyle = "rgba(74, 222, 128, 0.8)";
+                ctx.lineWidth = 2;
+                ctx.setLineDash([5, 3]);
+                ctx.stroke();
+
+                // Text
+                drawText("Level Shoulders", 0, 20, "#EF4444");
+
+                ctx.restore();
+            }
+        }
+
+        function analyzePosture(keypoints) {
+            const getPoint = (name) => keypoints.find(kp => kp.name === name);
+
+            const nose = getPoint('nose');
+            const leftEye = getPoint('left_eye');
+            const rightEye = getPoint('right_eye');
+            const leftShoulder = getPoint('left_shoulder');
+            const rightShoulder = getPoint('right_shoulder');
+
+            // Need minimum visibility
+            if (!nose || !leftEye || !rightEye || !leftShoulder || !rightShoulder ||
+                nose.score < 0.3 || leftEye.score < 0.3 || rightEye.score < 0.3) {
+                updateStatus("Position yourself in frame", "warning");
+                return null;
+            }
+
+            // 1. Head Tilt (Angle between eyes - Roll)
+            // Fix: dx should be leftEye.x - rightEye.x to get 0 degrees when level
+            // because leftEye (viewer's right) has larger x than rightEye (viewer's left)
+            const dy = rightEye.y - leftEye.y;
+            const dx = leftEye.x - rightEye.x;
+            const tiltRad = Math.atan2(dy, dx);
+            let tiltDeg = tiltRad * (180 / Math.PI);
+
+            // 2. Head Pitch (Looking up/down)
+            // Calculate ratio of nose drop below eye midpoint vs eye distance
+            // Higher ratio = looking down more
+            const eyeMidY = (leftEye.y + rightEye.y) / 2;
+            const eyeDist = Math.sqrt(Math.pow(rightEye.x - leftEye.x, 2) + Math.pow(rightEye.y - leftEye.y, 2));
+            const noseDropY = nose.y - eyeMidY;
+            let pitchRatio = noseDropY / eyeDist;
+
+            // 3. Shoulder Level
+            const sDy = rightShoulder.y - leftShoulder.y;
+            const sDx = leftShoulder.x - rightShoulder.x;
+            const shoulderRad = Math.atan2(sDy, sDx);
+            let shoulderDeg = shoulderRad * (180 / Math.PI);
+
+            // Apply Smoothing (Exponential Moving Average)
+            if (isFirstFrame) {
+                smoothTilt = tiltDeg;
+                smoothShoulder = shoulderDeg;
+                smoothPitch = pitchRatio;
+                isFirstFrame = false;
+            } else {
+                smoothTilt = (CONF.smoothingAlpha * tiltDeg) + ((1 - CONF.smoothingAlpha) * smoothTilt);
+                smoothShoulder = (CONF.smoothingAlpha * shoulderDeg) + ((1 - CONF.smoothingAlpha) * smoothShoulder);
+                smoothPitch = (CONF.smoothingAlpha * pitchRatio) + ((1 - CONF.smoothingAlpha) * smoothPitch);
+            }
+
+            tiltDeg = smoothTilt;
+            shoulderDeg = smoothShoulder;
+            pitchRatio = smoothPitch;
+
+            // 4. Distance
+            // Revert to standard dx/dy for distance calc (magnitude doesn't care about sign)
+            const distWidth = Math.sqrt(Math.pow(rightShoulder.x - leftShoulder.x, 2) + Math.pow(rightShoulder.y - leftShoulder.y, 2));
+            const frameWidth = canvas.width;
+            const distRatio = distWidth / frameWidth;
+
+            const isTiltGood = Math.abs(tiltDeg) < CONF.maxTilt;
+            const isPitchGood = pitchRatio < CONF.maxPitchRatio;
+            const isShoulderGood = Math.abs(shoulderDeg) < CONF.maxShoulderTilt;
+
+            // Update UI values
+            updateMetric('tilt', Math.abs(tiltDeg).toFixed(1), isTiltGood);
+            updateMetric('shoulder', Math.abs(shoulderDeg).toFixed(1), isShoulderGood);
+
+            // Pitch UI
+            let pitchMsg = 'Level';
+            if (pitchRatio >= CONF.maxPitchRatio) {
+                pitchMsg = 'Looking Down';
+            }
+            document.getElementById('pitchValue').innerText = pitchMsg;
+            updateIndicator('pitchIndicator', isPitchGood);
+
+            // Distance logic
+            let distState = 'good';
+            let distMsg = 'Good';
+            if (distRatio > 0.5) { distState = 'bad'; distMsg = 'Too Close'; }
+            else if (distRatio < 0.15) { distState = 'bad'; distMsg = 'Too Far'; }
+
+            document.getElementById('distValue').innerText = distMsg;
+            updateIndicator('distIndicator', distState === 'good');
+
+            // Overall Analysis
+            let issues = [];
+            if (!isTiltGood) issues.push("Fix head tilt");
+            if (!isPitchGood) issues.push("Raise your head");
+            if (!isShoulderGood) issues.push("Level shoulders");
+            if (distState === 'bad') issues.push(distMsg);
+
+            if (issues.length === 0) {
+                updateStatus("Great Posture!", "success", "Keep it up.");
+            } else {
+                updateStatus("Adjustment Needed", "error", issues.join(", "));
+            }
+
+            return {
+                tilt: { value: tiltDeg, isGood: isTiltGood },
+                pitch: { value: pitchRatio, isGood: isPitchGood },
+                shoulder: { value: shoulderDeg, isGood: isShoulderGood },
+                dist: { value: distRatio, state: distState }
+            };
+        }
+
+        function updateMetric(id, value, isGood) {
+            document.getElementById(`${id}Value`).innerText = `${value}°`;
+            updateIndicator(`${id}Indicator`, isGood);
+        }
+
+        function updateIndicator(id, isGood) {
+            const el = document.getElementById(id);
+            el.className = `w-3 h-3 rounded-full transition-colors ${isGood ? 'bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.5)]' : 'bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.5)]'}`;
+        }
+
+        function updateCameraContext(isLaptop) {
+            const tipsList = document.querySelector('#tipsList');
+            if (isLaptop) {
+                tipsList.innerHTML = `
+                    <li><strong>Laptop Camera Detected</strong></li>
+                    <li>Laptops on desks cause neck strain.</li>
+                    <li>👉 Try to raise your laptop (use a stand/books) so the screen top is eye-level.</li>
+                    <li>Sit centered in the frame.</li>
+                `;
+            } else {
+                tipsList.innerHTML = `
+                    <li><strong>External Camera Detected</strong></li>
+                    <li>Place camera on top of your main monitor.</li>
+                    <li>Ensure monitor top is at eye level.</li>
+                    <li>Sit centered in the frame.</li>
+                `;
+            }
+        }
+
+        function updateStatus(title, type, message = "") {
+            const elTitle = document.getElementById('mainStatus');
+            const elMsg = document.getElementById('mainAdvice');
+            
+            elTitle.innerText = title;
+            elMsg.innerText = message;
+
+            if (type === 'success') {
+                elTitle.className = "text-3xl font-bold text-green-400 transition-colors";
+            } else if (type === 'error') {
+                elTitle.className = "text-3xl font-bold text-red-400 transition-colors";
+            } else if (type === 'warning') {
+                elTitle.className = "text-3xl font-bold text-yellow-400 transition-colors";
+            } else {
+                elTitle.className = "text-3xl font-bold text-slate-400 transition-colors";
+            }
+        }
+
+        // Start
+        init();
+
+    </script>
+</body>
+</html>
