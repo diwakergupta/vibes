@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ErgoCoach - Privacy-First Posture Coach</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
+    <style>
+        @keyframes pulse-glow {
+            0%, 100% { filter: drop-shadow(0 0 8px rgba(239, 68, 68, 0.8)); }
+            50% { filter: drop-shadow(0 0 16px rgba(239, 68, 68, 1)); }
+        }
+        @keyframes bounce-up {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-8px); }
+        }
+        @keyframes slide-horizontal {
+            0%, 100% { transform: translateX(0); }
+            50% { transform: translateX(8px); }
+        }
+        @keyframes rotate-shake {
+            0%, 100% { transform: rotate(0deg); }
+            25% { transform: rotate(-5deg); }
+            75% { transform: rotate(5deg); }
+        }
+        .animate-pulse-glow { animation: pulse-glow 1.5s ease-in-out infinite; }
+        .animate-bounce-up { animation: bounce-up 1s ease-in-out infinite; }
+        .animate-slide-right { animation: slide-horizontal 1s ease-in-out infinite; }
+        .animate-slide-left { animation: slide-horizontal 1s ease-in-out infinite reverse; }
+        .animate-rotate-shake { animation: rotate-shake 1s ease-in-out infinite; }
+        .video-mirror { transform: scaleX(-1); }
+        .text-unmirror { transform: scaleX(-1); }
+    </style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+    <div class="max-w-7xl mx-auto px-4 py-6">
+        <!-- Header -->
+        <header class="flex items-center justify-between mb-6">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 bg-indigo-600 rounded-lg flex items-center justify-center">
+                    <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                </div>
+                <h1 class="text-2xl font-bold text-slate-800">ErgoCoach</h1>
+            </div>
+            <div class="flex items-center gap-2 bg-emerald-100 text-emerald-700 px-3 py-1 rounded-full text-sm font-medium">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path>
+                </svg>
+                Privacy First
+            </div>
+        </header>
+
+        <!-- Loading State -->
+        <div id="loadingState" class="text-center py-20">
+            <div class="inline-flex items-center gap-3">
+                <div class="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+                <span class="text-lg text-slate-600">Initializing AI model...</span>
+            </div>
+        </div>
+
+        <!-- Start Button -->
+        <div id="startState" class="hidden text-center py-20">
+            <button id="startBtn" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-4 px-8 rounded-xl text-lg transition-colors flex items-center gap-2 mx-auto">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                </svg>
+                Start Camera
+            </button>
+            <p class="text-slate-500 mt-4">Camera data never leaves your device</p>
+        </div>
+
+        <!-- Main App -->
+        <div id="appState" class="hidden">
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <!-- Video Feed -->
+                <div class="lg:col-span-2">
+                    <div class="relative bg-black rounded-xl overflow-hidden shadow-lg aspect-video">
+                        <video id="video" class="absolute inset-0 w-full h-full object-cover video-mirror" playsinline autoplay muted></video>
+                        <canvas id="canvas" class="absolute inset-0 w-full h-full video-mirror"></canvas>
+                        
+                        <!-- Visual Overlays (mirrored for positioning) -->
+                        <div id="overlays" class="absolute inset-0 pointer-events-none video-mirror">
+                            <!-- Head Tilt Arrow (visual only) -->
+                            <div id="tiltOverlayVisual" class="hidden absolute top-1/4 left-1/2 -translate-x-1/2">
+                                <svg class="w-24 h-24 animate-rotate-shake" viewBox="0 0 100 100">
+                                    <path d="M50 20 L50 80 M30 40 L50 20 L70 40" stroke="#ef4444" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                            </div>
+                            
+                            <!-- Head Pitch Arrow (visual only) -->
+                            <div id="pitchOverlayVisual" class="hidden absolute top-1/3 left-1/2 -translate-x-1/2">
+                                <svg class="w-20 h-20 animate-bounce-up" viewBox="0 0 100 100">
+                                    <path d="M50 80 L50 20 M30 40 L50 20 L70 40" stroke="#ef4444" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                            </div>
+                            
+                            <!-- Shoulder Level Indicator (visual only) -->
+                            <div id="shoulderOverlayVisual" class="hidden absolute bottom-1/3 left-1/2 -translate-x-1/2">
+                                <svg class="w-32 h-12" viewBox="0 0 150 40">
+                                    <line x1="10" y1="20" x2="140" y2="20" stroke="#ef4444" stroke-width="3" stroke-dasharray="5,5"/>
+                                </svg>
+                            </div>
+                        </div>
+                        
+                        <!-- Text Labels (not mirrored) -->
+                        <div id="overlayLabels" class="absolute inset-0 pointer-events-none">
+                            <div id="tiltOverlay" class="hidden absolute top-1/4 left-1/2 -translate-x-1/2 pt-20">
+                                <span class="text-red-500 font-bold text-sm bg-black/50 px-2 py-1 rounded">Fix Tilt</span>
+                            </div>
+                            <div id="pitchOverlay" class="hidden absolute top-1/3 left-1/2 -translate-x-1/2 pt-16">
+                                <span class="text-red-500 font-bold text-sm bg-black/50 px-2 py-1 rounded">Raise Head</span>
+                            </div>
+                            <div id="shoulderOverlay" class="hidden absolute bottom-1/3 left-1/2 -translate-x-1/2 pb-8">
+                                <span class="text-red-500 font-bold text-sm bg-black/50 px-2 py-1 rounded">Level Shoulders</span>
+                            </div>
+                        </div>
+
+                        <!-- Camera Error -->
+                        <div id="cameraError" class="hidden absolute inset-0 flex items-center justify-center bg-slate-900/90 text-white text-center p-6">
+                            <div>
+                                <svg class="w-16 h-16 mx-auto mb-4 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                                </svg>
+                                <p class="text-lg font-semibold mb-2">Camera Access Required</p>
+                                <p class="text-slate-300">Please allow camera access to use ErgoCoach</p>
+                                <button id="retryBtn" class="mt-4 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg">Try Again</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Status Panel -->
+                <div class="space-y-4">
+                    <!-- Overall Status -->
+                    <div id="overallStatus" class="bg-white rounded-xl p-4 shadow-sm border-l-4 border-emerald-500">
+                        <div class="flex items-center gap-3">
+                            <div id="statusIcon" class="w-10 h-10 bg-emerald-100 rounded-full flex items-center justify-center">
+                                <svg class="w-6 h-6 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                                </svg>
+                            </div>
+                            <div>
+                                <p class="text-sm text-slate-500">Overall Status</p>
+                                <p id="statusText" class="text-lg font-bold text-emerald-600">Great Posture!</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Metrics -->
+                    <div class="bg-white rounded-xl p-4 shadow-sm">
+                        <h3 class="font-semibold text-slate-800 mb-3">Metrics</h3>
+                        <div class="space-y-3">
+                            <div class="flex items-center justify-between">
+                                <span class="text-sm text-slate-600">Head Tilt</span>
+                                <div class="flex items-center gap-2">
+                                    <span id="tiltValue" class="text-sm font-medium text-slate-800">--°</span>
+                                    <div id="tiltIndicator" class="w-3 h-3 rounded-full bg-slate-300"></div>
+                                </div>
+                            </div>
+                            <div class="flex items-center justify-between">
+                                <span class="text-sm text-slate-600">Head Pitch</span>
+                                <div class="flex items-center gap-2">
+                                    <span id="pitchValue" class="text-sm font-medium text-slate-800">--</span>
+                                    <div id="pitchIndicator" class="w-3 h-3 rounded-full bg-slate-300"></div>
+                                </div>
+                            </div>
+                            <div class="flex items-center justify-between">
+                                <span class="text-sm text-slate-600">Distance</span>
+                                <div class="flex items-center gap-2">
+                                    <span id="distanceValue" class="text-sm font-medium text-slate-800">--</span>
+                                    <div id="distanceIndicator" class="w-3 h-3 rounded-full bg-slate-300"></div>
+                                </div>
+                            </div>
+                            <div class="flex items-center justify-between">
+                                <span class="text-sm text-slate-600">Shoulders</span>
+                                <div class="flex items-center gap-2">
+                                    <span id="shoulderValue" class="text-sm font-medium text-slate-800">--°</span>
+                                    <div id="shoulderIndicator" class="w-3 h-3 rounded-full bg-slate-300"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Tips -->
+                    <div class="bg-white rounded-xl p-4 shadow-sm">
+                        <h3 class="font-semibold text-slate-800 mb-3">Tips</h3>
+                        <div id="tipsList" class="space-y-2 text-sm text-slate-600">
+                            <p>Position yourself so your full upper body is visible</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Global variables
+        let detector = null;
+        let video = null;
+        let canvas = null;
+        let ctx = null;
+        let isRunning = false;
+        let cameraType = 'unknown';
+        
+        // EMA smoothing state
+        const emaState = {
+            headTilt: null,
+            headPitch: null,
+            shoulderLevel: null,
+            distance: null
+        };
+        const EMA_ALPHA = 0.2;
+        
+        // Thresholds
+        const THRESHOLDS = {
+            headTilt: 12,        // degrees
+            headPitch: 0.85,     // ratio
+            shoulderLevel: 12,   // degrees
+            distanceMin: 0.15,
+            distanceMax: 0.50
+        };
+
+        // DOM elements
+        const loadingState = document.getElementById('loadingState');
+        const startState = document.getElementById('startState');
+        const appState = document.getElementById('appState');
+        const startBtn = document.getElementById('startBtn');
+        const retryBtn = document.getElementById('retryBtn');
+        const cameraError = document.getElementById('cameraError');
+        
+        // Metric elements
+        const tiltValue = document.getElementById('tiltValue');
+        const pitchValue = document.getElementById('pitchValue');
+        const distanceValue = document.getElementById('distanceValue');
+        const shoulderValue = document.getElementById('shoulderValue');
+        const tiltIndicator = document.getElementById('tiltIndicator');
+        const pitchIndicator = document.getElementById('pitchIndicator');
+        const distanceIndicator = document.getElementById('distanceIndicator');
+        const shoulderIndicator = document.getElementById('shoulderIndicator');
+        
+        // Status elements
+        const overallStatus = document.getElementById('overallStatus');
+        const statusIcon = document.getElementById('statusIcon');
+        const statusText = document.getElementById('statusText');
+        
+        // Overlay elements (text labels)
+        const tiltOverlay = document.getElementById('tiltOverlay');
+        const pitchOverlay = document.getElementById('pitchOverlay');
+        const shoulderOverlay = document.getElementById('shoulderOverlay');
+        
+        // Visual overlay elements (mirrored SVGs)
+        const tiltOverlayVisual = document.getElementById('tiltOverlayVisual');
+        const pitchOverlayVisual = document.getElementById('pitchOverlayVisual');
+        const shoulderOverlayVisual = document.getElementById('shoulderOverlayVisual');
+        
+        // Tips element
+        const tipsList = document.getElementById('tipsList');
+
+        // Initialize
+        async function init() {
+            try {
+                // Load MoveNet model
+                detector = await poseDetection.createDetector(
+                    poseDetection.SupportedModels.MoveNet,
+                    {
+                        modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING
+                    }
+                );
+                
+                loadingState.classList.add('hidden');
+                startState.classList.remove('hidden');
+            } catch (error) {
+                console.error('Failed to load model:', error);
+                loadingState.innerHTML = '<p class="text-red-600">Failed to load AI model. Please refresh the page.</p>';
+            }
+        }
+
+        // Start camera
+        async function startCamera() {
+            video = document.getElementById('video');
+            canvas = document.getElementById('canvas');
+            ctx = canvas.getContext('2d');
+            
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: 'user' },
+                    audio: false
+                });
+                
+                // Detect camera type
+                const tracks = stream.getVideoTracks();
+                if (tracks.length > 0) {
+                    const label = tracks[0].label.toLowerCase();
+                    if (label.includes('facetime') || label.includes('built-in') || label.includes('integrated')) {
+                        cameraType = 'laptop';
+                    } else {
+                        cameraType = 'external';
+                    }
+                }
+                
+                video.srcObject = stream;
+                
+                video.onloadedmetadata = () => {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    startState.classList.add('hidden');
+                    appState.classList.remove('hidden');
+                    isRunning = true;
+                    detectPose();
+                };
+            } catch (error) {
+                console.error('Camera access denied:', error);
+                cameraError.classList.remove('hidden');
+            }
+        }
+
+        // EMA smoothing
+        function smoothValue(key, value) {
+            if (emaState[key] === null) {
+                emaState[key] = value;
+            } else {
+                emaState[key] = EMA_ALPHA * value + (1 - EMA_ALPHA) * emaState[key];
+            }
+            return emaState[key];
+        }
+
+        // Calculate angle between two points
+        function calculateAngle(x1, y1, x2, y2) {
+            return Math.atan2(y2 - y1, x2 - x1) * (180 / Math.PI);
+        }
+
+        // Normalize angle to be the acute angle from horizontal (0-90 degrees)
+        function normalizeTiltAngle(angle) {
+            // Convert to range [-180, 180]
+            let normalized = angle % 360;
+            if (normalized > 180) normalized -= 360;
+            if (normalized < -180) normalized += 360;
+            
+            // Get the acute angle from horizontal
+            if (normalized > 90) normalized = 180 - normalized;
+            if (normalized < -90) normalized = -180 - normalized;
+            
+            return Math.abs(normalized);
+        }
+
+        // Get keypoint with confidence check
+        function getKeypoint(keypoints, name) {
+            const kp = keypoints.find(k => k.name === name);
+            return kp && kp.score > 0.3 ? kp : null;
+        }
+
+        // Detect pose and update UI
+        async function detectPose() {
+            if (!isRunning) return;
+            
+            try {
+                const poses = await detector.estimatePoses(video);
+                
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                
+                if (poses.length > 0) {
+                    const pose = poses[0];
+                    const keypoints = pose.keypoints;
+                    
+                    // Get keypoints
+                    const nose = getKeypoint(keypoints, 'nose');
+                    const leftEye = getKeypoint(keypoints, 'left_eye');
+                    const rightEye = getKeypoint(keypoints, 'right_eye');
+                    const leftEar = getKeypoint(keypoints, 'left_ear');
+                    const rightEar = getKeypoint(keypoints, 'right_ear');
+                    const leftShoulder = getKeypoint(keypoints, 'left_shoulder');
+                    const rightShoulder = getKeypoint(keypoints, 'right_shoulder');
+                    
+                    // Calculate metrics
+                    let headTilt = null;
+                    let headPitch = null;
+                    let shoulderLevel = null;
+                    let distance = null;
+                    
+                    // Head Tilt: angle between eyes (normalized to acute angle from horizontal)
+                    if (leftEye && rightEye) {
+                        const rawTilt = calculateAngle(leftEye.x, leftEye.y, rightEye.x, rightEye.y);
+                        const normalizedTilt = normalizeTiltAngle(rawTilt);
+                        headTilt = smoothValue('headTilt', normalizedTilt);
+                    }
+                    
+                    // Head Pitch: (nose.y - eyeMidpoint.y) / eyeDistance
+                    if (nose && leftEye && rightEye) {
+                        const eyeMidpointY = (leftEye.y + rightEye.y) / 2;
+                        const eyeDistance = Math.sqrt(
+                            Math.pow(rightEye.x - leftEye.x, 2) + 
+                            Math.pow(rightEye.y - leftEye.y, 2)
+                        );
+                        const rawPitch = (nose.y - eyeMidpointY) / eyeDistance;
+                        headPitch = smoothValue('headPitch', Math.abs(rawPitch));
+                    }
+                    
+                    // Shoulder Level: angle between shoulders (normalized to acute angle from horizontal)
+                    if (leftShoulder && rightShoulder) {
+                        const rawShoulder = calculateAngle(
+                            leftShoulder.x, leftShoulder.y,
+                            rightShoulder.x, rightShoulder.y
+                        );
+                        const normalizedShoulder = normalizeTiltAngle(rawShoulder);
+                        shoulderLevel = smoothValue('shoulderLevel', normalizedShoulder);
+                    }
+                    
+                    // Distance: shoulderWidth / frameWidth
+                    if (leftShoulder && rightShoulder) {
+                        const shoulderWidth = Math.sqrt(
+                            Math.pow(rightShoulder.x - leftShoulder.x, 2) +
+                            Math.pow(rightShoulder.y - leftShoulder.y, 2)
+                        );
+                        const rawDistance = shoulderWidth / canvas.width;
+                        distance = smoothValue('distance', rawDistance);
+                    }
+                    
+                    // Determine posture quality
+                    const isTiltGood = headTilt !== null && headTilt < THRESHOLDS.headTilt;
+                    const isPitchGood = headPitch !== null && headPitch < THRESHOLDS.headPitch;
+                    const isShoulderGood = shoulderLevel !== null && shoulderLevel < THRESHOLDS.shoulderLevel;
+                    const isDistanceGood = distance !== null && 
+                        distance >= THRESHOLDS.distanceMin && 
+                        distance <= THRESHOLDS.distanceMax;
+                    
+                    const allGood = isTiltGood && isPitchGood && isShoulderGood && isDistanceGood;
+                    
+                    // Update status
+                    if (allGood) {
+                        overallStatus.className = 'bg-white rounded-xl p-4 shadow-sm border-l-4 border-emerald-500';
+                        statusIcon.className = 'w-10 h-10 bg-emerald-100 rounded-full flex items-center justify-center';
+                        statusIcon.innerHTML = '<svg class="w-6 h-6 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>';
+                        statusText.textContent = 'Great Posture!';
+                        statusText.className = 'text-lg font-bold text-emerald-600';
+                    } else {
+                        overallStatus.className = 'bg-white rounded-xl p-4 shadow-sm border-l-4 border-rose-500';
+                        statusIcon.className = 'w-10 h-10 bg-rose-100 rounded-full flex items-center justify-center';
+                        statusIcon.innerHTML = '<svg class="w-6 h-6 text-rose-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>';
+                        statusText.textContent = 'Adjustment Needed';
+                        statusText.className = 'text-lg font-bold text-rose-600';
+                    }
+                    
+                    // Update metric displays
+                    if (headTilt !== null) {
+                        tiltValue.textContent = headTilt.toFixed(1) + '°';
+                        tiltIndicator.className = `w-3 h-3 rounded-full ${isTiltGood ? 'bg-emerald-500' : 'bg-rose-500'}`;
+                    }
+                    
+                    if (headPitch !== null) {
+                        pitchValue.textContent = headPitch.toFixed(2);
+                        pitchIndicator.className = `w-3 h-3 rounded-full ${isPitchGood ? 'bg-emerald-500' : 'bg-rose-500'}`;
+                    }
+                    
+                    if (distance !== null) {
+                        let distanceText = 'Good';
+                        if (distance < THRESHOLDS.distanceMin) distanceText = 'Too Far';
+                        else if (distance > THRESHOLDS.distanceMax) distanceText = 'Too Close';
+                        distanceValue.textContent = distanceText;
+                        distanceIndicator.className = `w-3 h-3 rounded-full ${isDistanceGood ? 'bg-emerald-500' : 'bg-rose-500'}`;
+                    }
+                    
+                    if (shoulderLevel !== null) {
+                        shoulderValue.textContent = shoulderLevel.toFixed(1) + '°';
+                        shoulderIndicator.className = `w-3 h-3 rounded-full ${isShoulderGood ? 'bg-emerald-500' : 'bg-rose-500'}`;
+                    }
+                    
+                    // Show/hide overlays (both visual and text)
+                    tiltOverlay.classList.toggle('hidden', isTiltGood);
+                    pitchOverlay.classList.toggle('hidden', isPitchGood);
+                    shoulderOverlay.classList.toggle('hidden', isShoulderGood);
+                    tiltOverlayVisual.classList.toggle('hidden', isTiltGood);
+                    pitchOverlayVisual.classList.toggle('hidden', isPitchGood);
+                    shoulderOverlayVisual.classList.toggle('hidden', isShoulderGood);
+                    
+                    // Update tips
+                    updateTips(isTiltGood, isPitchGood, isDistanceGood, isShoulderGood);
+                    
+                    // Draw keypoints
+                    drawKeypoints(keypoints, isTiltGood, isPitchGood, isShoulderGood, isDistanceGood);
+                }
+            } catch (error) {
+                console.error('Detection error:', error);
+            }
+            
+            requestAnimationFrame(detectPose);
+        }
+
+        // Update tips based on posture and camera type
+        function updateTips(isTiltGood, isPitchGood, isDistanceGood, isShoulderGood) {
+            const tips = [];
+            
+            if (!isTiltGood) {
+                tips.push('Keep your head straight - imagine a string pulling you up from the crown of your head');
+            }
+            
+            if (!isPitchGood) {
+                if (cameraType === 'laptop') {
+                    tips.push('Raise your laptop screen to eye level using a stand or stack of books');
+                } else {
+                    tips.push('Position your monitor so the top of the screen is at or slightly below eye level');
+                }
+                tips.push('Tuck your chin slightly to maintain a neutral neck position');
+            }
+            
+            if (!isDistanceGood) {
+                tips.push('Maintain an arm\'s length distance from your screen (about 20-26 inches)');
+            }
+            
+            if (!isShoulderGood) {
+                tips.push('Relax your shoulders - keep them level and avoid hunching forward');
+                tips.push('Keep both feet flat on the floor with knees at 90 degrees');
+            }
+            
+            if (tips.length === 0) {
+                tips.push('Excellent posture! Remember to take breaks every 20-30 minutes');
+                if (cameraType === 'laptop') {
+                    tips.push('Consider using an external keyboard and mouse for better ergonomics');
+                } else {
+                    tips.push('Your external webcam setup is ideal for maintaining good posture');
+                }
+            }
+            
+            tipsList.innerHTML = tips.map(tip => `<p class="flex items-start gap-2"><span class="text-indigo-500 mt-1">•</span><span>${tip}</span></p>`).join('');
+        }
+
+        // Draw keypoints and skeleton
+        function drawKeypoints(keypoints, isTiltGood, isPitchGood, isShoulderGood, isDistanceGood) {
+            // Define connections (simplified skeleton)
+            const connections = [
+                ['nose', 'left_eye'],
+                ['nose', 'right_eye'],
+                ['left_eye', 'left_ear'],
+                ['right_eye', 'right_ear'],
+                ['left_eye', 'right_eye'],
+                ['left_shoulder', 'right_shoulder']
+            ];
+            
+            // Draw connections
+            connections.forEach(([name1, name2]) => {
+                const kp1 = getKeypoint(keypoints, name1);
+                const kp2 = getKeypoint(keypoints, name2);
+                
+                if (kp1 && kp2) {
+                    ctx.beginPath();
+                    ctx.moveTo(kp1.x, kp1.y);
+                    ctx.lineTo(kp2.x, kp2.y);
+                    
+                    // Color based on posture quality
+                    let strokeColor = '#10b981'; // emerald-500 (good)
+                    if ((name1 === 'left_eye' || name1 === 'right_eye') && !isTiltGood) {
+                        strokeColor = '#ef4444'; // red-500 (bad)
+                    }
+                    if (name1 === 'nose' && !isPitchGood) {
+                        strokeColor = '#ef4444';
+                    }
+                    if ((name1 === 'left_shoulder' || name1 === 'right_shoulder') && !isShoulderGood) {
+                        strokeColor = '#ef4444';
+                    }
+                    
+                    ctx.strokeStyle = strokeColor;
+                    ctx.lineWidth = 3;
+                    ctx.stroke();
+                }
+            });
+            
+            // Draw keypoints
+            keypoints.forEach(kp => {
+                if (kp.score > 0.3) {
+                    ctx.beginPath();
+                    ctx.arc(kp.x, kp.y, 6, 0, 2 * Math.PI);
+                    ctx.fillStyle = '#3b82f6'; // blue-500
+                    ctx.fill();
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                }
+            });
+        }
+
+        // Event listeners
+        startBtn.addEventListener('click', startCamera);
+        retryBtn.addEventListener('click', () => {
+            cameraError.classList.add('hidden');
+            startCamera();
+        });
+
+        // Initialize
+        init();
+    </script>
+</body>
+</html>

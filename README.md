@@ -9,6 +9,7 @@ This repository is a collection of vibe-coded experiments, tools, and demos by [
 - [Browser Spy](./browser-spy/)
 - [Recycling Infographic](./recycling-infographic/)
 - [Snow Physics Engine](./snow-physics/)
+- [ErgoCoach](./ergo-kimi/)
 
 ## Structure
 
