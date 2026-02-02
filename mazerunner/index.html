@@ -1,0 +1,1168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Maze Runner - Head Gesture Navigation</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'IBM Plex Mono', monospace;
+            background: #000;
+            color: #fff;
+            overflow: hidden;
+            user-select: none;
+        }
+
+        #canvas-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+
+        #ui-layer {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 10;
+            pointer-events: none;
+        }
+
+        #ui-layer > * {
+            pointer-events: auto;
+        }
+
+        #webcam-preview {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            width: 160px;
+            height: 120px;
+            border-radius: 8px;
+            overflow: hidden;
+            background: #1a1a1a;
+            border: 2px solid #333;
+        }
+
+        #webcam-video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+        }
+
+        #webcam-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            transform: scaleX(-1);
+        }
+
+        #minimap-container {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.9);
+            border: 2px solid #444;
+            border-radius: 12px;
+            padding: 15px;
+            transition: opacity 0.3s ease;
+        }
+
+        #minimap-container.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        #minimap {
+            width: 200px;
+            height: 200px;
+            background: #1a1a1a;
+            border-radius: 8px;
+        }
+
+        #controls {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.9);
+            border: 2px solid #444;
+            border-radius: 12px;
+            padding: 20px;
+            width: 280px;
+        }
+
+        .control-group {
+            margin-bottom: 15px;
+        }
+
+        .control-group:last-child {
+            margin-bottom: 0;
+        }
+
+        .control-label {
+            display: block;
+            font-size: 12px;
+            color: #888;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .level-display {
+            font-size: 24px;
+            font-weight: 600;
+            color: #fff;
+            margin-bottom: 5px;
+        }
+
+        .slider-container {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        input[type="range"] {
+            flex: 1;
+            -webkit-appearance: none;
+            appearance: none;
+            height: 4px;
+            background: #333;
+            border-radius: 2px;
+            outline: none;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 16px;
+            height: 16px;
+            background: #fff;
+            border-radius: 50%;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        input[type="range"]::-webkit-slider-thumb:hover {
+            transform: scale(1.2);
+        }
+
+        .value-display {
+            font-size: 11px;
+            color: #fff;
+            min-width: 30px;
+            text-align: right;
+        }
+
+        .toggle-btn {
+            background: #333;
+            color: #fff;
+            border: 1px solid #555;
+            border-radius: 6px;
+            padding: 8px 16px;
+            font-family: inherit;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .toggle-btn:hover {
+            background: #444;
+            border-color: #666;
+        }
+
+        .toggle-btn.active {
+            background: #fff;
+            color: #000;
+        }
+
+        #calibrate-btn {
+            width: 100%;
+            background: #fff;
+            color: #000;
+            font-weight: 600;
+        }
+
+        #calibrate-btn:hover {
+            background: #eee;
+        }
+
+        #calibrate-btn:disabled {
+            background: #333;
+            color: #666;
+            cursor: not-allowed;
+        }
+
+        #status-bar {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.9);
+            border: 2px solid #444;
+            border-radius: 8px;
+            padding: 10px 20px;
+            font-size: 12px;
+            color: #888;
+        }
+
+        #status-bar.connected {
+            border-color: #4caf50;
+            color: #4caf50;
+        }
+
+        #status-bar.calibrating {
+            border-color: #ff9800;
+            color: #ff9800;
+        }
+
+        #start-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #000;
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+        }
+
+        #start-overlay h1 {
+            font-size: 48px;
+            font-weight: 600;
+            margin-bottom: 10px;
+            letter-spacing: 4px;
+        }
+
+        #start-overlay p {
+            font-size: 14px;
+            color: #888;
+            margin-bottom: 30px;
+            max-width: 400px;
+            line-height: 1.6;
+        }
+
+        #start-btn {
+            background: #fff;
+            color: #000;
+            border: none;
+            border-radius: 8px;
+            padding: 15px 40px;
+            font-family: inherit;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        #start-btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 0 30px rgba(255, 255, 255, 0.3);
+        }
+
+        #win-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.95);
+            z-index: 200;
+            display: none;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+        }
+
+        #win-overlay.show {
+            display: flex;
+        }
+
+        #win-overlay h2 {
+            font-size: 36px;
+            margin-bottom: 10px;
+            letter-spacing: 4px;
+        }
+
+        #win-overlay .level-complete {
+            font-size: 18px;
+            color: #4caf50;
+            margin-bottom: 20px;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+        }
+
+        #next-level-btn, #restart-btn, #new-maze-btn {
+            background: #fff;
+            color: #000;
+            border: none;
+            border-radius: 8px;
+            padding: 12px 30px;
+            font-family: inherit;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        #restart-btn {
+            background: #333;
+            color: #fff;
+            border: 2px solid #fff;
+        }
+
+        .gesture-debug {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.9);
+            border: 2px solid #444;
+            border-radius: 8px;
+            padding: 15px 20px;
+            font-size: 11px;
+            color: #fff;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            min-width: 200px;
+        }
+
+        .gesture-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .gesture-label {
+            width: 60px;
+            text-align: right;
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .gesture-indicator-bar {
+            flex: 1;
+            height: 10px;
+            background: #333;
+            border-radius: 5px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .gesture-center-line {
+            position: absolute;
+            left: 50%;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background: #666;
+            z-index: 1;
+        }
+
+        .gesture-indicator-fill {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            transition: all 0.1s;
+        }
+
+        .gesture-indicator-fill.forward {
+            left: 50%;
+            background: #4caf50;
+        }
+
+        .gesture-indicator-fill.back {
+            right: 50%;
+            background: #ff9800;
+        }
+
+        .gesture-indicator-fill.right {
+            left: 50%;
+            background: #2196f3;
+        }
+
+        .gesture-indicator-fill.left {
+            right: 50%;
+            background: #f44336;
+        }
+    </style>
+</head>
+<body>
+    <div id="start-overlay">
+        <h1>MAZE RUNNER</h1>
+        <p>Navigate the maze using body movements.<br><br>
+        <strong>Lean forward</strong> to move forward<br>
+        <strong>Lean back</strong> to move backward<br>
+        <strong>Lean left/right</strong> to turn<br><br>
+        10 levels of increasing difficulty.<br>
+        Make sure your full upper body is visible to camera.<br>
+        Click below to start.</p>
+        <button id="start-btn">Enter the Maze</button>
+    </div>
+
+    <div id="win-overlay">
+        <h2>EXIT REACHED</h2>
+        <div class="level-complete" id="level-complete-text">Level 1 Complete!</div>
+        <div class="button-group">
+            <button id="next-level-btn">Next Level</button>
+            <button id="restart-btn">Start Over</button>
+        </div>
+    </div>
+
+    <div id="canvas-container"></div>
+
+    <div id="ui-layer">
+        <div id="controls">
+            <div class="control-group">
+                <label class="control-label">Level</label>
+                <div class="level-display" id="level-display">1 / 10</div>
+            </div>
+
+            <div class="control-group">
+                <label class="control-label">Camera Status</label>
+                <div id="status-bar">Initializing...</div>
+            </div>
+
+            <div class="control-group">
+                <label class="control-label">Movement Speed</label>
+                <div class="slider-container">
+                    <input type="range" id="move-sensitivity" min="1" max="10" value="7">
+                    <span class="value-display" id="move-value">7</span>
+                </div>
+            </div>
+
+            <div class="control-group">
+                <label class="control-label">Turn Speed</label>
+                <div class="slider-container">
+                    <input type="range" id="rot-sensitivity" min="1" max="10" value="7">
+                    <span class="value-display" id="rot-value">7</span>
+                </div>
+            </div>
+
+            <div class="control-group">
+                <label class="control-label">Response</label>
+                <div class="slider-container">
+                    <input type="range" id="response-sensitivity" min="1" max="10" value="6">
+                    <span class="value-display" id="response-value">6</span>
+                </div>
+            </div>
+
+            <div class="control-group">
+                <label class="control-label">Minimap</label>
+                <button class="toggle-btn active" id="map-toggle">Show</button>
+            </div>
+
+            <div class="control-group">
+                <button class="toggle-btn" id="calibrate-btn" disabled>Calibrate Neutral Position</button>
+            </div>
+
+            <div class="control-group">
+                <button class="toggle-btn" id="restart-game-btn">Restart Game (Level 1)</button>
+            </div>
+        </div>
+
+        <div id="minimap-container">
+            <canvas id="minimap" width="200" height="200"></canvas>
+        </div>
+
+        <div id="webcam-preview">
+            <video id="webcam-video" playsinline></video>
+            <canvas id="webcam-canvas"></canvas>
+        </div>
+
+        <div id="gesture-debug" class="gesture-debug" style="display: none;">
+            <div class="gesture-row">
+                <span class="gesture-label">Forward</span>
+                <div class="gesture-indicator-bar">
+                    <div class="gesture-center-line"></div>
+                    <div class="gesture-indicator-fill forward" id="forward-indicator" style="width: 0%"></div>
+                </div>
+            </div>
+            <div class="gesture-row">
+                <span class="gesture-label">Back</span>
+                <div class="gesture-indicator-bar">
+                    <div class="gesture-center-line"></div>
+                    <div class="gesture-indicator-fill back" id="back-indicator" style="width: 0%"></div>
+                </div>
+            </div>
+            <div class="gesture-row">
+                <span class="gesture-label">Left</span>
+                <div class="gesture-indicator-bar">
+                    <div class="gesture-center-line"></div>
+                    <div class="gesture-indicator-fill left" id="left-indicator" style="width: 0%"></div>
+                </div>
+            </div>
+            <div class="gesture-row">
+                <span class="gesture-label">Right</span>
+                <div class="gesture-indicator-bar">
+                    <div class="gesture-center-line"></div>
+                    <div class="gesture-indicator-fill right" id="right-indicator" style="width: 0%"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Global state
+        let camera, scene, renderer;
+        let player = { x: 1.5, z: 1.5, angle: 0 };
+        let maze = [];
+        let mazeSize = 15;
+        let cellSize = 2;
+        let wallHeight = 2.5;
+        let walls = [];
+        let neutralPosition = null;
+        let isTracking = false;
+        let moveSensitivity = 7;
+        let rotSensitivity = 7;
+        let responseSensitivity = 6;
+        let showMinimap = true;
+        let hasWon = false;
+        let lastLandmarks = null;
+        
+        // Level system
+        let currentLevel = 1;
+        const maxLevel = 10;
+        const levelSizes = [3, 4, 5, 6, 7, 8, 10, 12, 13, 15]; // Maze sizes for levels 1-10
+
+        // Three.js setup
+        function initThree() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0xf5f5f5);
+            scene.fog = new THREE.Fog(0xf5f5f5, 2, 20);
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100);
+            camera.position.y = 1.6;
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+            // Lighting - soft ambient + directional
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+
+            const dirLight = new THREE.DirectionalLight(0xffffff, 0.4);
+            dirLight.position.set(10, 20, 10);
+            dirLight.castShadow = true;
+            dirLight.shadow.mapSize.width = 2048;
+            dirLight.shadow.mapSize.height = 2048;
+            scene.add(dirLight);
+
+            // Floor
+            const floorGeometry = new THREE.PlaneGeometry(mazeSize * cellSize * 2, mazeSize * cellSize * 2);
+            const floorMaterial = new THREE.MeshStandardMaterial({ 
+                color: 0xe8e8e8,
+                roughness: 0.9
+            });
+            const floor = new THREE.Mesh(floorGeometry, floorMaterial);
+            floor.rotation.x = -Math.PI / 2;
+            floor.receiveShadow = true;
+            scene.add(floor);
+
+            // Ceiling
+            const ceilingGeometry = new THREE.PlaneGeometry(mazeSize * cellSize * 2, mazeSize * cellSize * 2);
+            const ceilingMaterial = new THREE.MeshStandardMaterial({ 
+                color: 0xffffff,
+                roughness: 0.8
+            });
+            const ceiling = new THREE.Mesh(ceilingGeometry, ceilingMaterial);
+            ceiling.rotation.x = Math.PI / 2;
+            ceiling.position.y = wallHeight;
+            scene.add(ceiling);
+
+            window.addEventListener('resize', onWindowResize);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // Maze generation using recursive backtracker
+        function generateMaze() {
+            maze = [];
+            for (let y = 0; y < mazeSize; y++) {
+                maze[y] = [];
+                for (let x = 0; x < mazeSize; x++) {
+                    maze[y][x] = {
+                        x, y,
+                        visited: false,
+                        walls: { top: true, right: true, bottom: true, left: true }
+                    };
+                }
+            }
+
+            const stack = [];
+            const startX = 0;
+            const startY = 0;
+            maze[startY][startX].visited = true;
+            stack.push(maze[startY][startX]);
+
+            const directions = [
+                { dx: 0, dy: -1, wall: 'top', opp: 'bottom' },
+                { dx: 1, dy: 0, wall: 'right', opp: 'left' },
+                { dx: 0, dy: 1, wall: 'bottom', opp: 'top' },
+                { dx: -1, dy: 0, wall: 'left', opp: 'right' }
+            ];
+
+            while (stack.length > 0) {
+                const current = stack[stack.length - 1];
+                const neighbors = [];
+
+                for (const dir of directions) {
+                    const nx = current.x + dir.dx;
+                    const ny = current.y + dir.dy;
+
+                    if (nx >= 0 && nx < mazeSize && ny >= 0 && ny < mazeSize && !maze[ny][nx].visited) {
+                        neighbors.push({ cell: maze[ny][nx], dir });
+                    }
+                }
+
+                if (neighbors.length > 0) {
+                    const { cell: next, dir } = neighbors[Math.floor(Math.random() * neighbors.length)];
+                    current.walls[dir.wall] = false;
+                    next.walls[dir.opp] = false;
+                    next.visited = true;
+                    stack.push(next);
+                } else {
+                    stack.pop();
+                }
+            }
+        }
+
+        // Build 3D walls from maze
+        function buildWalls() {
+            // Remove existing walls
+            walls.forEach(wall => scene.remove(wall));
+            walls = [];
+
+            const wallMaterial = new THREE.MeshStandardMaterial({
+                color: 0xffffff,
+                roughness: 0.4,
+                metalness: 0.1
+            });
+
+            const wallGeometry = new THREE.BoxGeometry(cellSize, wallHeight, 0.1);
+
+            for (let y = 0; y < mazeSize; y++) {
+                for (let x = 0; x < mazeSize; x++) {
+                    const cell = maze[y][x];
+                    const cx = x * cellSize;
+                    const cz = y * cellSize;
+
+                    if (cell.walls.top) {
+                        const wall = new THREE.Mesh(wallGeometry, wallMaterial);
+                        wall.position.set(cx + cellSize / 2, wallHeight / 2, cz);
+                        wall.castShadow = true;
+                        wall.receiveShadow = true;
+                        scene.add(wall);
+                        walls.push(wall);
+                    }
+
+                    if (cell.walls.left) {
+                        const wall = new THREE.Mesh(wallGeometry, wallMaterial);
+                        wall.rotation.y = Math.PI / 2;
+                        wall.position.set(cx, wallHeight / 2, cz + cellSize / 2);
+                        wall.castShadow = true;
+                        wall.receiveShadow = true;
+                        scene.add(wall);
+                        walls.push(wall);
+                    }
+
+                    // Add outer walls for right and bottom edges
+                    if (x === mazeSize - 1 && cell.walls.right) {
+                        const wall = new THREE.Mesh(wallGeometry, wallMaterial);
+                        wall.rotation.y = Math.PI / 2;
+                        wall.position.set(cx + cellSize, wallHeight / 2, cz + cellSize / 2);
+                        wall.castShadow = true;
+                        wall.receiveShadow = true;
+                        scene.add(wall);
+                        walls.push(wall);
+                    }
+
+                    if (y === mazeSize - 1 && cell.walls.bottom) {
+                        const wall = new THREE.Mesh(wallGeometry, wallMaterial);
+                        wall.position.set(cx + cellSize / 2, wallHeight / 2, cz + cellSize);
+                        wall.castShadow = true;
+                        wall.receiveShadow = true;
+                        scene.add(wall);
+                        walls.push(wall);
+                    }
+                }
+            }
+
+            // Add exit marker
+            const exitGeometry = new THREE.CircleGeometry(0.4, 32);
+            const exitMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+            const exitMarker = new THREE.Mesh(exitGeometry, exitMaterial);
+            exitMarker.rotation.x = -Math.PI / 2;
+            exitMarker.position.set(
+                (mazeSize - 1) * cellSize + cellSize / 2,
+                0.01,
+                (mazeSize - 1) * cellSize + cellSize / 2
+            );
+            scene.add(exitMarker);
+            walls.push(exitMarker);
+        }
+
+        // Minimap rendering
+        function drawMinimap() {
+            const canvas = document.getElementById('minimap');
+            const ctx = canvas.getContext('2d');
+            const scale = canvas.width / (mazeSize * cellSize);
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw walls
+            ctx.strokeStyle = '#666';
+            ctx.lineWidth = 2;
+
+            for (let y = 0; y < mazeSize; y++) {
+                for (let x = 0; x < mazeSize; x++) {
+                    const cell = maze[y][x];
+                    const cx = x * cellSize * scale;
+                    const cy = y * cellSize * scale;
+                    const cs = cellSize * scale;
+
+                    ctx.beginPath();
+                    if (cell.walls.top) {
+                        ctx.moveTo(cx, cy);
+                        ctx.lineTo(cx + cs, cy);
+                    }
+                    if (cell.walls.right) {
+                        ctx.moveTo(cx + cs, cy);
+                        ctx.lineTo(cx + cs, cy + cs);
+                    }
+                    if (cell.walls.bottom) {
+                        ctx.moveTo(cx + cs, cy + cs);
+                        ctx.lineTo(cx, cy + cs);
+                    }
+                    if (cell.walls.left) {
+                        ctx.moveTo(cx, cy + cs);
+                        ctx.lineTo(cx, cy);
+                    }
+                    ctx.stroke();
+                }
+            }
+
+            // Draw exit
+            ctx.fillStyle = '#4caf50';
+            ctx.beginPath();
+            ctx.arc(
+                (mazeSize - 1) * cellSize * scale + cellSize * scale / 2,
+                (mazeSize - 1) * cellSize * scale + cellSize * scale / 2,
+                6, 0, Math.PI * 2
+            );
+            ctx.fill();
+
+            // Draw player position
+            ctx.fillStyle = '#ff4444';
+            ctx.beginPath();
+            ctx.arc(player.x * scale, player.z * scale, 5, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Draw player direction
+            ctx.strokeStyle = '#ff4444';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(player.x * scale, player.z * scale);
+            ctx.lineTo(
+                player.x * scale + Math.cos(player.angle) * 15,
+                player.z * scale + Math.sin(player.angle) * 15
+            );
+            ctx.stroke();
+        }
+
+        // Collision detection
+        function canMoveTo(x, z) {
+            const buffer = 0.3;
+            const minX = Math.floor((x - buffer) / cellSize);
+            const maxX = Math.floor((x + buffer) / cellSize);
+            const minZ = Math.floor((z - buffer) / cellSize);
+            const maxZ = Math.floor((z + buffer) / cellSize);
+
+            for (let mz = minZ; mz <= maxZ; mz++) {
+                for (let mx = minX; mx <= maxX; mx++) {
+                    if (mx < 0 || mx >= mazeSize || mz < 0 || mz >= mazeSize) {
+                        return false;
+                    }
+
+                    const cell = maze[mz][mx];
+                    const cx = mx * cellSize;
+                    const cz = mz * cellSize;
+
+                    // Check if position is inside a wall
+                    if (x < cx + buffer && cell.walls.left) return false;
+                    if (x > cx + cellSize - buffer && cell.walls.right) return false;
+                    if (z < cz + buffer && cell.walls.top) return false;
+                    if (z > cz + cellSize - buffer && cell.walls.bottom) return false;
+                }
+            }
+
+            return true;
+        }
+
+        // Check win condition
+        function checkWin() {
+            const exitX = (mazeSize - 1) * cellSize + cellSize / 2;
+            const exitZ = (mazeSize - 1) * cellSize + cellSize / 2;
+            const dist = Math.sqrt((player.x - exitX) ** 2 + (player.z - exitZ) ** 2);
+
+            if (dist < 0.8 && !hasWon) {
+                hasWon = true;
+                document.getElementById('level-complete-text').textContent = `Level ${currentLevel} Complete!`;
+                document.getElementById('win-overlay').classList.add('show');
+            }
+        }
+
+        // Calculate body lean from pose landmarks
+        function calculateBodyLean(landmarks) {
+            // Key points for full body tracking
+            const nose = landmarks[0];
+            const leftShoulder = landmarks[11];
+            const rightShoulder = landmarks[12];
+            const leftHip = landmarks[23];
+            const rightHip = landmarks[24];
+            
+            // Calculate torso center (average of shoulders and hips)
+            const torsoX = (leftShoulder.x + rightShoulder.x + leftHip.x + rightHip.x) / 4;
+            const torsoY = (leftShoulder.y + rightShoulder.y + leftHip.y + rightHip.y) / 4;
+            
+            // Use nose Y position relative to shoulders to detect forward/back lean
+            // When leaning forward, nose moves down (higher Y value in normalized coords)
+            const shoulderY = (leftShoulder.y + rightShoulder.y) / 2;
+            const noseOffsetY = nose.y - shoulderY;
+            
+            // Calculate lateral lean using shoulder midpoint vs hip midpoint
+            const shoulderX = (leftShoulder.x + rightShoulder.x) / 2;
+            const hipX = (leftHip.x + rightHip.x) / 2;
+            const lateralLean = shoulderX - hipX;
+            
+            return {
+                x: lateralLean,  // Left/right lean
+                y: noseOffsetY   // Forward/back lean (positive = forward)
+            };
+        }
+
+        // Update player position from body tracking
+        function updatePlayer(leanX, leanY) {
+            if (!neutralPosition || hasWon) return;
+
+            // Calculate deltas from neutral
+            const deltaX = leanX - neutralPosition.x;
+            const deltaY = leanY - neutralPosition.y;
+
+            // Dynamic thresholds based on response sensitivity
+            const responseFactor = responseSensitivity / 5;
+            const moveThreshold = 0.02 / responseFactor;
+            const turnThreshold = 0.015 / responseFactor;
+
+            // Update debug indicators - 4 separate bars
+            // Forward indicator (grows from center to right when deltaY > 0)
+            if (deltaY > 0) {
+                const forwardPct = Math.min(100, (deltaY / 0.1) * 100);
+                document.getElementById('forward-indicator').style.width = forwardPct + '%';
+            } else {
+                document.getElementById('forward-indicator').style.width = '0%';
+            }
+            
+            // Back indicator (grows from center to left when deltaY < 0)
+            if (deltaY < 0) {
+                const backPct = Math.min(100, (Math.abs(deltaY) / 0.1) * 100);
+                document.getElementById('back-indicator').style.width = backPct + '%';
+            } else {
+                document.getElementById('back-indicator').style.width = '0%';
+            }
+            
+            // Right indicator (grows from center to right when deltaX > 0)
+            if (deltaX > 0) {
+                const rightPct = Math.min(100, (deltaX / 0.08) * 100);
+                document.getElementById('right-indicator').style.width = rightPct + '%';
+            } else {
+                document.getElementById('right-indicator').style.width = '0%';
+            }
+            
+            // Left indicator (grows from center to left when deltaX < 0)
+            if (deltaX < 0) {
+                const leftPct = Math.min(100, (Math.abs(deltaX) / 0.08) * 100);
+                document.getElementById('left-indicator').style.width = leftPct + '%';
+            } else {
+                document.getElementById('left-indicator').style.width = '0%';
+            }
+
+            // Forward/backward movement based on nose position relative to shoulders
+            // Positive deltaY means leaning forward (nose lower than neutral)
+            const baseMoveSpeed = 0.08;
+            const moveSpeed = baseMoveSpeed * (moveSensitivity / 5) * responseFactor;
+            
+            if (deltaY > moveThreshold) {
+                // Forward
+                const intensity = Math.min(1, (deltaY - moveThreshold) / 0.05);
+                const actualSpeed = moveSpeed * (0.5 + intensity * 0.5);
+                const newX = player.x + Math.cos(player.angle) * actualSpeed;
+                const newZ = player.z + Math.sin(player.angle) * actualSpeed;
+                if (canMoveTo(newX, newZ)) {
+                    player.x = newX;
+                    player.z = newZ;
+                }
+            } else if (deltaY < -moveThreshold) {
+                // Backward
+                const intensity = Math.min(1, Math.abs(deltaY + moveThreshold) / 0.05);
+                const actualSpeed = moveSpeed * (0.5 + intensity * 0.5);
+                const newX = player.x - Math.cos(player.angle) * actualSpeed;
+                const newZ = player.z - Math.sin(player.angle) * actualSpeed;
+                if (canMoveTo(newX, newZ)) {
+                    player.x = newX;
+                    player.z = newZ;
+                }
+            }
+
+            // Rotation based on lateral lean
+            // Leaning left increases angle (turns left), leaning right decreases angle (turns right)
+            const baseRotSpeed = 0.06;
+            const rotSpeed = baseRotSpeed * (rotSensitivity / 5) * responseFactor;
+            
+            if (deltaX > turnThreshold) {
+                // Leaning right - turn right
+                const intensity = Math.min(1, (deltaX - turnThreshold) / 0.03);
+                player.angle -= rotSpeed * (0.5 + intensity * 0.5);
+            } else if (deltaX < -turnThreshold) {
+                // Leaning left - turn left
+                const intensity = Math.min(1, Math.abs(deltaX + turnThreshold) / 0.03);
+                player.angle += rotSpeed * (0.5 + intensity * 0.5);
+            }
+
+            // Update camera
+            camera.position.x = player.x;
+            camera.position.z = player.z;
+            camera.rotation.y = -player.angle - Math.PI / 2;
+
+            checkWin();
+        }
+
+        // Body pose tracking with MediaPipe
+        const videoElement = document.getElementById('webcam-video');
+        const canvasElement = document.getElementById('webcam-canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+
+        function onResults(results) {
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            if (results.poseLandmarks) {
+                // Draw pose
+                drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS, {color: '#00FF00', lineWidth: 2});
+                drawLandmarks(canvasCtx, results.poseLandmarks, {color: '#FF0000', lineWidth: 1, radius: 3});
+
+                // Calculate body lean
+                const lean = calculateBodyLean(results.poseLandmarks);
+                lastLandmarks = lean;
+
+                // Enable calibrate button once we have tracking data
+                if (!isTracking) {
+                    document.getElementById('calibrate-btn').disabled = false;
+                    document.getElementById('status-bar').textContent = 'Stand neutral, then click Calibrate';
+                    document.getElementById('status-bar').classList.add('calibrating');
+                }
+
+                // Update player
+                if (isTracking && neutralPosition) {
+                    updatePlayer(lean.x, lean.y);
+                    drawMinimap();
+                }
+            }
+
+            canvasCtx.restore();
+        }
+
+        const pose = new Pose({locateFile: (file) => {
+            return `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`;
+        }});
+
+        pose.setOptions({
+            modelComplexity: 1,
+            smoothLandmarks: true,
+            enableSegmentation: false,
+            smoothSegmentation: false,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+
+        pose.onResults(onResults);
+
+        // Camera setup
+        let webcamCamera = null;
+
+        function startCamera() {
+            webcamCamera = new Camera(videoElement, {
+                onFrame: async () => {
+                    await pose.send({image: videoElement});
+                },
+                width: 640,
+                height: 480
+            });
+            webcamCamera.start();
+        }
+
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
+            renderer.render(scene, camera);
+        }
+
+        // Start a specific level
+        function startLevel(level) {
+            currentLevel = level;
+            mazeSize = levelSizes[level - 1];
+            hasWon = false;
+            
+            // Reset player position
+            player.x = 1.5;
+            player.z = 1.5;
+            player.angle = 0;
+            
+            // Update UI
+            document.getElementById('level-display').textContent = `${currentLevel} / ${maxLevel}`;
+            document.getElementById('win-overlay').classList.remove('show');
+            
+            // Generate and build maze
+            generateMaze();
+            buildWalls();
+            
+            // Reset calibration
+            neutralPosition = null;
+            isTracking = false;
+            document.getElementById('calibrate-btn').disabled = false;
+            document.getElementById('status-bar').textContent = 'Stand neutral, then click Calibrate';
+            document.getElementById('status-bar').classList.remove('connected');
+            document.getElementById('status-bar').classList.add('calibrating');
+            
+            // Reset indicators
+            document.getElementById('forward-indicator').style.width = '0%';
+            document.getElementById('back-indicator').style.width = '0%';
+            document.getElementById('left-indicator').style.width = '0%';
+            document.getElementById('right-indicator').style.width = '0%';
+        }
+
+        // UI Event handlers
+        document.getElementById('start-btn').addEventListener('click', () => {
+            document.getElementById('start-overlay').style.display = 'none';
+            document.getElementById('gesture-debug').style.display = 'flex';
+            initThree();
+            startLevel(1);
+            startCamera();
+            animate();
+        });
+
+        document.getElementById('next-level-btn').addEventListener('click', () => {
+            if (currentLevel < maxLevel) {
+                startLevel(currentLevel + 1);
+            } else {
+                // Completed all levels, restart from level 1
+                startLevel(1);
+            }
+        });
+
+        document.getElementById('restart-btn').addEventListener('click', () => {
+            startLevel(1);
+        });
+
+        document.getElementById('restart-game-btn').addEventListener('click', () => {
+            startLevel(1);
+        });
+
+        document.getElementById('move-sensitivity').addEventListener('input', (e) => {
+            moveSensitivity = parseInt(e.target.value);
+            document.getElementById('move-value').textContent = moveSensitivity;
+        });
+
+        document.getElementById('rot-sensitivity').addEventListener('input', (e) => {
+            rotSensitivity = parseInt(e.target.value);
+            document.getElementById('rot-value').textContent = rotSensitivity;
+        });
+
+        document.getElementById('response-sensitivity').addEventListener('input', (e) => {
+            responseSensitivity = parseInt(e.target.value);
+            document.getElementById('response-value').textContent = responseSensitivity;
+        });
+
+        document.getElementById('map-toggle').addEventListener('click', (e) => {
+            showMinimap = !showMinimap;
+            e.target.textContent = showMinimap ? 'Show' : 'Hide';
+            e.target.classList.toggle('active', showMinimap);
+            document.getElementById('minimap-container').classList.toggle('hidden', !showMinimap);
+        });
+
+        document.getElementById('calibrate-btn').addEventListener('click', () => {
+            if (lastLandmarks) {
+                neutralPosition = { x: lastLandmarks.x, y: lastLandmarks.y };
+                isTracking = true;
+                
+                // Update status
+                document.getElementById('status-bar').textContent = 'Tracking Active - Level ' + currentLevel;
+                document.getElementById('status-bar').classList.remove('calibrating');
+                document.getElementById('status-bar').classList.add('connected');
+                document.getElementById('calibrate-btn').disabled = true;
+                
+                // Reset indicators
+                document.getElementById('forward-indicator').style.width = '0%';
+                document.getElementById('back-indicator').style.width = '0%';
+                document.getElementById('left-indicator').style.width = '0%';
+                document.getElementById('right-indicator').style.width = '0%';
+                
+                // Visual feedback
+                const btn = document.getElementById('calibrate-btn');
+                const originalText = btn.textContent;
+                btn.textContent = 'Calibrated!';
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                    btn.disabled = false;
+                }, 1000);
+            }
+        });
+
+        // Setup canvas sizes
+        canvasElement.width = 320;
+        canvasElement.height = 240;
+    </script>
+</body>
+</html>

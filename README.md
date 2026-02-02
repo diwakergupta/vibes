@@ -11,6 +11,7 @@ This repository is a collection of vibe-coded experiments, tools, and demos by [
 - [Snow Physics Engine](./snow-physics/)
 - [ErgoCoach](./ergocoach)
 - [ErgoCoach - Kimi 2.5 version](./ergo-kimi/)
+- [Maze Runner](./mazerunner/)
 
 ## Structure
 
