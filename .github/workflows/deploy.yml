@@ -46,6 +46,75 @@ jobs:
           echo ""
           echo "Root directory contents:"
           ls -la
+      - name: Generate index.html from README
+        run: |
+          # Create a simple HTML wrapper for the README content
+          cat > index.html << 'HTMLEOF'
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+              <meta charset="UTF-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>Vibe Coded Experiments</title>
+              <style>
+                  body {
+                      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+                      line-height: 1.6;
+                      color: #24292f;
+                      max-width: 1012px;
+                      margin: 0 auto;
+                      padding: 2rem;
+                      background-color: #ffffff;
+                  }
+                  h1, h2, h3 { color: #1f2328; margin-top: 24px; margin-bottom: 16px; }
+                  h1 { font-size: 2em; border-bottom: 1px solid #d1d9e0; padding-bottom: 0.3em; }
+                  h2 { font-size: 1.5em; border-bottom: 1px solid #d1d9e0; padding-bottom: 0.3em; }
+                  a { color: #0969da; text-decoration: none; }
+                  a:hover { text-decoration: underline; }
+                  ul, ol { padding-left: 2em; }
+                  li { margin: 0.25em 0; }
+                  code {
+                      background-color: rgba(175, 184, 193, 0.2);
+                      padding: 0.2em 0.4em;
+                      border-radius: 6px;
+                      font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+                      font-size: 85%;
+                  }
+                  hr {
+                      height: 0.25em;
+                      padding: 0;
+                      margin: 24px 0;
+                      background-color: #d1d9e0;
+                      border: 0;
+                  }
+                  footer {
+                      margin-top: 40px;
+                      padding-top: 20px;
+                      border-top: 1px solid #d1d9e0;
+                      font-size: 0.875em;
+                      color: #57606a;
+                  }
+                  footer a { color: #57606a; }
+              </style>
+          </head>
+          <body>
+          HTMLEOF
+          
+          # Convert README.md markdown to HTML (basic conversion)
+          # Install cmark-gfm for GitHub-flavored markdown support
+          sudo apt-get update && sudo apt-get install -y cmark-gfm
+          
+          # Convert markdown to HTML and append to index.html
+          cmark-gfm --github-pre-lang README.md >> index.html
+          
+          # Add footer
+          cat >> index.html << 'HTMLEOF'
+          </body>
+          </html>
+          HTMLEOF
+          
+          echo "Generated index.html"
+          ls -la index.html
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
