@@ -39,6 +39,13 @@ jobs:
           TIMESTAMP=$(date -u '+%Y-%m-%d %H:%M:%S UTC')
           SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
           echo "*Last updated: $TIMESTAMP | [${SHORT_SHA}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})*" >> README.md
+      - name: Verify CNAME file
+        run: |
+          echo "CNAME file contents:"
+          cat CNAME
+          echo ""
+          echo "Root directory contents:"
+          ls -la
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
