@@ -1,0 +1,838 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tuner Codex</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #1a1a1a;
+      --panel: #232323;
+      --text: #f2f2f2;
+      --muted: #a4a4a4;
+      --flat-sharp: #ff4444;
+      --close: #ffb84d;
+      --near: #ffe44d;
+      --perfect: #44ff88;
+      --focus: #8ecbff;
+    }
+
+    html[data-mode="light"] {
+      color-scheme: light;
+      --bg: #f5f5f5;
+      --panel: #ffffff;
+      --text: #181818;
+      --muted: #5a5a5a;
+      --focus: #0f6bd8;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      font-family: "Segoe UI", "Trebuchet MS", sans-serif;
+      background:
+        radial-gradient(1200px 700px at 10% -20%, rgba(80, 130, 255, 0.2), transparent 56%),
+        radial-gradient(1000px 700px at 100% 100%, rgba(68, 255, 136, 0.18), transparent 56%),
+        var(--bg);
+      color: var(--text);
+      padding: 16px;
+    }
+
+    .shell {
+      width: min(880px, 100%);
+      min-height: min(720px, 95vh);
+      background: linear-gradient(170deg, var(--panel), color-mix(in srgb, var(--panel), #000 6%));
+      border-radius: 24px;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
+      padding: clamp(16px, 3vw, 28px);
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 18px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .badge {
+      font-size: 13px;
+      color: var(--muted);
+      border: 1px solid color-mix(in srgb, var(--muted), transparent 70%);
+      border-radius: 999px;
+      padding: 7px 12px;
+    }
+
+    .gear {
+      width: 46px;
+      height: 46px;
+      border-radius: 50%;
+      border: 1px solid color-mix(in srgb, var(--muted), transparent 70%);
+      background: transparent;
+      color: var(--text);
+      font-size: 22px;
+      cursor: pointer;
+    }
+
+    .main {
+      display: grid;
+      place-items: center;
+      text-align: center;
+      gap: 10px;
+    }
+
+    .note {
+      font-weight: 800;
+      font-size: clamp(56px, 15vw, 108px);
+      line-height: 0.9;
+      letter-spacing: 0.03em;
+      min-height: 1em;
+    }
+
+    .hz {
+      min-height: 1.3em;
+      font-size: clamp(20px, 4vw, 26px);
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    .meter {
+      width: min(640px, 92%);
+      margin-top: 6px;
+      border: none;
+      background: none;
+      padding: 0;
+      cursor: pointer;
+      color: inherit;
+    }
+
+    .meter-track {
+      width: 100%;
+      height: 62px;
+      border-radius: 999px;
+      position: relative;
+      background: linear-gradient(90deg,
+        var(--flat-sharp) 0%,
+        var(--flat-sharp) 12%,
+        var(--close) 30%,
+        var(--near) 43%,
+        var(--perfect) 50%,
+        var(--near) 57%,
+        var(--close) 70%,
+        var(--flat-sharp) 88%,
+        var(--flat-sharp) 100%);
+      box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.1);
+    }
+
+    .meter-track::before {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: 7px;
+      height: 48px;
+      width: 2px;
+      transform: translateX(-50%);
+      border-radius: 2px;
+      background: rgba(255, 255, 255, 0.9);
+    }
+
+    .pointer {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 40px;
+      height: 40px;
+      transform: translate(-50%, -50%);
+      border-radius: 50%;
+      background: #fff;
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.34);
+      transition: transform 120ms ease-out;
+    }
+
+    .meter-labels {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 10px;
+      font-size: 12px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      padding: 0 6px;
+    }
+
+    .cents {
+      min-height: 1.2em;
+      font-size: clamp(22px, 5vw, 30px);
+      font-weight: 700;
+    }
+
+    .hint {
+      min-height: 1.4em;
+      font-size: 16px;
+      color: var(--muted);
+    }
+
+    .footer {
+      display: grid;
+      place-items: center;
+      gap: 10px;
+    }
+
+    .start {
+      border: none;
+      border-radius: 12px;
+      background: var(--perfect);
+      color: #0d1a13;
+      padding: 15px 24px;
+      min-width: 220px;
+      font-size: 18px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .status {
+      font-size: 14px;
+      min-height: 1.2em;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .help {
+      font-size: 14px;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.45);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 170ms ease;
+    }
+
+    .overlay.show {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .settings {
+      position: absolute;
+      right: 16px;
+      bottom: 16px;
+      width: min(380px, calc(100% - 32px));
+      background: var(--panel);
+      border: 1px solid color-mix(in srgb, var(--muted), transparent 65%);
+      border-radius: 16px;
+      padding: 15px;
+      transform: translateY(14px);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 170ms ease, transform 170ms ease;
+    }
+
+    .settings.show {
+      opacity: 1;
+      transform: translateY(0);
+      pointer-events: auto;
+    }
+
+    .settings h2 {
+      margin: 0 0 8px;
+      font-size: 18px;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: center;
+      margin: 12px 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    select,
+    input,
+    .settings button {
+      background: color-mix(in srgb, var(--panel), #000 10%);
+      color: var(--text);
+      border: 1px solid color-mix(in srgb, var(--muted), transparent 60%);
+      border-radius: 9px;
+      padding: 7px 10px;
+      font: inherit;
+    }
+
+    .toggle {
+      width: 48px;
+      height: 28px;
+      border-radius: 999px;
+      border: none;
+      background: color-mix(in srgb, var(--muted), transparent 70%);
+      position: relative;
+      cursor: pointer;
+    }
+
+    .toggle::after {
+      content: "";
+      position: absolute;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      left: 4px;
+      top: 4px;
+      background: #fff;
+      transition: transform 120ms ease;
+    }
+
+    .toggle.on {
+      background: color-mix(in srgb, var(--perfect), transparent 40%);
+    }
+
+    .toggle.on::after {
+      transform: translateX(20px);
+    }
+
+    .hidden { display: none !important; }
+
+    button:focus-visible,
+    select:focus-visible,
+    input:focus-visible {
+      outline: 3px solid var(--focus);
+      outline-offset: 2px;
+    }
+
+    .ambient {
+      filter: brightness(0.78) saturate(0.8);
+    }
+
+    @media (max-width: 760px) {
+      .meter-track { height: 58px; }
+      .pointer { width: 34px; height: 34px; }
+      .meter-labels { font-size: 11px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation: none !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell" id="shell">
+    <div class="toolbar">
+      <div class="badge" id="stateText">Tap Start to enable microphone</div>
+      <button class="gear" id="settingsOpen" aria-label="Open settings">&#9881;</button>
+    </div>
+
+    <section class="main">
+      <div class="note" id="noteDisplay" aria-live="polite">--</div>
+      <div class="hz" id="freqDisplay">--.- Hz</div>
+
+      <button class="meter" id="meterButton" aria-label="Pitch meter, press to freeze reading" title="Tap meter to freeze/unfreeze">
+        <div class="meter-track">
+          <div class="pointer" id="pointer"></div>
+        </div>
+        <div class="meter-labels"><span>Flat</span><span>Perfect</span><span>Sharp</span></div>
+      </button>
+
+      <div class="cents" id="centsDisplay">--</div>
+      <div class="hint" id="hintText">Play one clear note</div>
+    </section>
+
+    <section class="footer">
+      <button class="start" id="startButton">Start Tuner</button>
+      <div class="status" id="statusText">Client-side tuner. No ads. No backend.</div>
+      <div class="help">Tap the meter to freeze a reading. Hold a note steady for a lock.</div>
+    </section>
+
+    <div class="overlay" id="overlay"></div>
+    <aside class="settings" id="settingsPanel" aria-label="Settings panel">
+      <h2>Settings</h2>
+
+      <div class="row">
+        <label for="a4Choice">A4 Reference</label>
+        <select id="a4Choice">
+          <option value="432">432 Hz</option>
+          <option value="440">440 Hz</option>
+          <option value="442">442 Hz</option>
+          <option value="444">444 Hz</option>
+          <option value="custom">Custom</option>
+        </select>
+      </div>
+
+      <div class="row hidden" id="a4CustomRow">
+        <label for="a4Custom">Custom A4</label>
+        <input id="a4Custom" type="number" min="420" max="460" step="0.1" value="440" />
+      </div>
+
+      <div class="row">
+        <label for="themeChoice">Theme</label>
+        <select id="themeChoice">
+          <option value="auto">Auto</option>
+          <option value="dark">Dark</option>
+          <option value="light">Light</option>
+        </select>
+      </div>
+
+      <div class="row">
+        <span>Sound Feedback</span>
+        <button class="toggle" id="soundButton" aria-pressed="false" type="button"></button>
+      </div>
+
+      <div class="row">
+        <span>Show Frequency</span>
+        <button class="toggle on" id="showFreqButton" aria-pressed="true" type="button"></button>
+      </div>
+
+      <div class="row">
+        <span>Close</span>
+        <button id="settingsClose" type="button">Close</button>
+      </div>
+    </aside>
+  </main>
+
+  <script>
+    (() => {
+      const NOTES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+      const PERFECT_TEXTS = ["Nailed it!", "Pitch perfect!", "Locked in.", "Sweet spot.", "Right there."];
+
+      const ui = {
+        shell: document.getElementById("shell"),
+        state: document.getElementById("stateText"),
+        note: document.getElementById("noteDisplay"),
+        hz: document.getElementById("freqDisplay"),
+        pointer: document.getElementById("pointer"),
+        cents: document.getElementById("centsDisplay"),
+        hint: document.getElementById("hintText"),
+        start: document.getElementById("startButton"),
+        status: document.getElementById("statusText"),
+        meter: document.getElementById("meterButton"),
+        overlay: document.getElementById("overlay"),
+        panel: document.getElementById("settingsPanel"),
+        settingsOpen: document.getElementById("settingsOpen"),
+        settingsClose: document.getElementById("settingsClose"),
+        a4Choice: document.getElementById("a4Choice"),
+        a4CustomRow: document.getElementById("a4CustomRow"),
+        a4Custom: document.getElementById("a4Custom"),
+        themeChoice: document.getElementById("themeChoice"),
+        soundButton: document.getElementById("soundButton"),
+        showFreqButton: document.getElementById("showFreqButton"),
+      };
+
+      const state = {
+        listening: false,
+        frozen: false,
+        audioCtx: null,
+        analyser: null,
+        micStream: null,
+        sourceNode: null,
+        rafId: 0,
+        smoothHz: null,
+        lastStableHz: null,
+        stableMs: 0,
+        inTuneMs: 0,
+        lastSoundAt: performance.now(),
+        tonePlayed: false,
+        prefs: loadPrefs(),
+      };
+
+      applyTheme(state.prefs.theme);
+      syncPrefsUi();
+      resetReadout("Play one clear note");
+
+      function loadPrefs() {
+        const fallback = { a4: 440, theme: "auto", sound: false, showFrequency: true };
+        try {
+          const raw = localStorage.getItem("tunerCodexPrefs");
+          return raw ? { ...fallback, ...JSON.parse(raw) } : fallback;
+        } catch {
+          return fallback;
+        }
+      }
+
+      function savePrefs() {
+        localStorage.setItem("tunerCodexPrefs", JSON.stringify(state.prefs));
+      }
+
+      function syncPrefsUi() {
+        const a4 = String(state.prefs.a4);
+        if (["432", "440", "442", "444"].includes(a4)) {
+          ui.a4Choice.value = a4;
+          ui.a4CustomRow.classList.add("hidden");
+        } else {
+          ui.a4Choice.value = "custom";
+          ui.a4CustomRow.classList.remove("hidden");
+          ui.a4Custom.value = String(state.prefs.a4);
+        }
+        ui.themeChoice.value = state.prefs.theme;
+        setSwitch(ui.soundButton, state.prefs.sound);
+        setSwitch(ui.showFreqButton, state.prefs.showFrequency);
+        ui.hz.classList.toggle("hidden", !state.prefs.showFrequency);
+      }
+
+      function setSwitch(element, on) {
+        element.classList.toggle("on", on);
+        element.setAttribute("aria-pressed", on ? "true" : "false");
+      }
+
+      function applyTheme(choice) {
+        if (choice === "auto") {
+          const light = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches;
+          document.documentElement.dataset.mode = light ? "light" : "dark";
+          return;
+        }
+        document.documentElement.dataset.mode = choice;
+      }
+
+      function openSettings() {
+        ui.panel.classList.add("show");
+        ui.overlay.classList.add("show");
+      }
+
+      function closeSettings() {
+        ui.panel.classList.remove("show");
+        ui.overlay.classList.remove("show");
+      }
+
+      function centsColor(cents) {
+        const abs = Math.abs(cents);
+        if (abs > 30) return "#ff4444";
+        if (abs > 10) return "#ffb84d";
+        if (abs > 3) return "#ffe44d";
+        return "#44ff88";
+      }
+
+      function hzToPitch(hz) {
+        const midi = Math.round(12 * Math.log2(hz / state.prefs.a4)) + 69;
+        const nearest = state.prefs.a4 * (2 ** ((midi - 69) / 12));
+        const cents = 1200 * Math.log2(hz / nearest);
+        const pitchClass = ((midi % 12) + 12) % 12;
+        const octave = Math.floor(midi / 12) - 1;
+        return { note: NOTES[pitchClass], octave, cents };
+      }
+
+      function detectAutocorrelation(samples, sampleRate) {
+        let energy = 0;
+        for (let i = 0; i < samples.length; i++) energy += samples[i] * samples[i];
+        const rms = Math.sqrt(energy / samples.length);
+        if (rms < 0.01) return null;
+
+        const lowHz = 80;
+        const highHz = 1200;
+        const minShift = Math.floor(sampleRate / highHz);
+        const maxShift = Math.ceil(sampleRate / lowHz);
+        const corr = new Float32Array(maxShift + 1);
+
+        for (let shift = minShift; shift <= maxShift; shift++) {
+          let numerator = 0;
+          let denominator = 0;
+          const limit = samples.length - shift;
+          for (let i = 0; i < limit; i++) {
+            const a = samples[i];
+            const b = samples[i + shift];
+            numerator += a * b;
+            denominator += a * a + b * b;
+          }
+          corr[shift] = denominator > 0 ? (2 * numerator) / denominator : 0;
+        }
+
+        let bestShift = -1;
+        let bestValue = -1;
+        let positiveRun = false;
+
+        for (let shift = minShift; shift <= maxShift; shift++) {
+          const value = corr[shift];
+          if (value > 0) positiveRun = true;
+          if (!positiveRun) continue;
+
+          if (value > bestValue) {
+            bestValue = value;
+            bestShift = shift;
+          }
+
+          if (value < 0 && positiveRun) {
+            if (bestValue > 0.95) break;
+            bestShift = -1;
+            bestValue = -1;
+            positiveRun = false;
+          }
+        }
+
+        if (bestShift < 0 || bestValue < 0.95) return null;
+
+        const left = corr[bestShift - 1] || 0;
+        const center = corr[bestShift] || 0;
+        const right = corr[bestShift + 1] || 0;
+        const denominator = 2 * (left - 2 * center + right);
+        const offset = denominator ? (left - right) / denominator : 0;
+        const refinedShift = bestShift + (Number.isFinite(offset) ? offset : 0);
+
+        const hz = sampleRate / refinedShift;
+        if (!Number.isFinite(hz) || hz < 60 || hz > 1400) return null;
+
+        return { hz, confidence: bestValue };
+      }
+
+      function resetReadout(message) {
+        ui.note.textContent = "--";
+        ui.cents.textContent = "--";
+        ui.cents.style.color = "var(--muted)";
+        ui.note.style.color = "var(--text)";
+        ui.pointer.style.transform = "translate(-50%, -50%)";
+        ui.pointer.style.boxShadow = "0 8px 20px rgba(0,0,0,0.34)";
+        if (state.prefs.showFrequency) ui.hz.textContent = "--.- Hz";
+        ui.hint.textContent = message;
+      }
+
+      function updateReadout(currentHz, pitch) {
+        const clamped = Math.max(-50, Math.min(50, pitch.cents));
+        const percent = (clamped + 50) / 100;
+        const color = centsColor(pitch.cents);
+
+        ui.note.innerHTML = `${pitch.note}<sup style="font-size:.45em;opacity:.65">${pitch.octave}</sup>`;
+        if (state.prefs.showFrequency) ui.hz.textContent = `${currentHz.toFixed(1)} Hz`;
+        ui.cents.textContent = `${pitch.cents >= 0 ? "+" : ""}${pitch.cents.toFixed(1)}¢`;
+        ui.cents.style.color = color;
+        ui.note.style.color = color;
+
+        ui.pointer.style.transform = `translate(calc(${(percent * 100).toFixed(2)}% - 50%), -50%)`;
+        ui.pointer.style.boxShadow = `0 0 0 4px ${color}55, 0 8px 20px rgba(0,0,0,0.34)`;
+
+        const abs = Math.abs(pitch.cents);
+        if (abs > 35) ui.hint.textContent = pitch.cents < 0 ? "Very flat" : "Very sharp";
+        else if (abs > 10) ui.hint.textContent = pitch.cents < 0 ? "A bit flat" : "A bit sharp";
+
+        if (abs <= 2.5) {
+          state.inTuneMs += 16;
+          if (state.inTuneMs >= 2000 && !state.tonePlayed) {
+            state.tonePlayed = true;
+            ui.hint.textContent = PERFECT_TEXTS[Math.floor(Math.random() * PERFECT_TEXTS.length)];
+            if (state.prefs.sound) playChime();
+            if (navigator.vibrate) navigator.vibrate([10, 30, 10]);
+          }
+        } else {
+          state.inTuneMs = 0;
+          state.tonePlayed = false;
+        }
+
+        if (Math.abs(currentHz - 440) < 0.35 && pitch.note === "A" && Number(state.prefs.a4) === 440) {
+          ui.hint.textContent = "Universal Standard: A440";
+        }
+      }
+
+      function playChime() {
+        if (!state.audioCtx) return;
+        const osc = state.audioCtx.createOscillator();
+        const gain = state.audioCtx.createGain();
+        osc.type = "triangle";
+        osc.frequency.value = 988;
+        gain.gain.value = 0.0001;
+        osc.connect(gain);
+        gain.connect(state.audioCtx.destination);
+        const t = state.audioCtx.currentTime;
+        gain.gain.exponentialRampToValueAtTime(0.028, t + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+        osc.start(t);
+        osc.stop(t + 0.17);
+      }
+
+      async function startMic() {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          ui.status.textContent = "Web Audio microphone access is not supported in this browser.";
+          return;
+        }
+
+        ui.start.disabled = true;
+        ui.start.textContent = "Starting...";
+        ui.status.textContent = "Initializing microphone...";
+
+        try {
+          state.audioCtx = state.audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+          if (state.audioCtx.state === "suspended") await state.audioCtx.resume();
+
+          state.micStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: false,
+              noiseSuppression: false,
+              autoGainControl: false,
+            },
+          });
+
+          state.sourceNode = state.audioCtx.createMediaStreamSource(state.micStream);
+          state.analyser = state.audioCtx.createAnalyser();
+          state.analyser.fftSize = 4096;
+          state.analyser.smoothingTimeConstant = 0;
+          state.sourceNode.connect(state.analyser);
+
+          state.listening = true;
+          state.frozen = false;
+          state.smoothHz = null;
+          state.lastStableHz = null;
+          state.stableMs = 0;
+          state.inTuneMs = 0;
+          state.lastSoundAt = performance.now();
+
+          ui.state.textContent = "Listening";
+          ui.status.textContent = "Live feedback active";
+          ui.start.textContent = "Stop";
+          ui.start.disabled = false;
+
+          const frame = new Float32Array(state.analyser.fftSize);
+          let previousFrameTime = performance.now();
+
+          const tick = (now) => {
+            if (!state.listening) return;
+            state.rafId = requestAnimationFrame(tick);
+
+            if (state.frozen) {
+              ui.state.textContent = "Frozen";
+              return;
+            }
+
+            state.analyser.getFloatTimeDomainData(frame);
+            const detection = detectAutocorrelation(frame, state.audioCtx.sampleRate);
+
+            if (!detection) {
+              const idle = now - state.lastSoundAt;
+              if (idle > 400) {
+                resetReadout("Play a note...");
+              }
+              ui.shell.classList.toggle("ambient", idle > 30000);
+              state.stableMs = 0;
+              return;
+            }
+
+            const dt = now - previousFrameTime;
+            previousFrameTime = now;
+
+            state.lastSoundAt = now;
+            ui.shell.classList.remove("ambient");
+
+            if (state.lastStableHz !== null && Math.abs(state.lastStableHz - detection.hz) < 3) {
+              state.stableMs += dt;
+            } else {
+              state.stableMs = 0;
+            }
+            state.lastStableHz = detection.hz;
+
+            if (state.stableMs < 180) {
+              ui.state.textContent = "Locking note...";
+              return;
+            }
+
+            ui.state.textContent = "Listening";
+            state.smoothHz = state.smoothHz === null ? detection.hz : (state.smoothHz * 0.7 + detection.hz * 0.3);
+            const pitch = hzToPitch(state.smoothHz);
+            updateReadout(state.smoothHz, pitch);
+          };
+
+          cancelAnimationFrame(state.rafId);
+          state.rafId = requestAnimationFrame(tick);
+        } catch (error) {
+          ui.start.textContent = "Start Tuner";
+          ui.start.disabled = false;
+          const text = String(error && error.message ? error.message : error).toLowerCase();
+          if (text.includes("permission") || text.includes("denied")) {
+            ui.status.textContent = "Microphone access required. Please allow access and try again.";
+          } else {
+            ui.status.textContent = "Microphone unavailable. Close other apps using it, then retry.";
+          }
+        }
+      }
+
+      function stopMic() {
+        state.listening = false;
+        cancelAnimationFrame(state.rafId);
+        if (state.sourceNode) state.sourceNode.disconnect();
+        if (state.micStream) state.micStream.getTracks().forEach(track => track.stop());
+        state.sourceNode = null;
+        state.micStream = null;
+        state.analyser = null;
+        state.smoothHz = null;
+        ui.state.textContent = "Stopped";
+      }
+
+      ui.start.addEventListener("click", async () => {
+        if (state.listening) {
+          stopMic();
+          ui.start.textContent = "Start Tuner";
+          ui.status.textContent = "Microphone stopped";
+          resetReadout("Tap Start to tune again");
+          return;
+        }
+        await startMic();
+      });
+
+      ui.meter.addEventListener("click", () => {
+        if (!state.listening) return;
+        state.frozen = !state.frozen;
+        ui.status.textContent = state.frozen ? "Reading frozen" : "Live feedback active";
+      });
+
+      ui.meter.addEventListener("keydown", event => {
+        if (event.key === " " || event.key === "Enter") {
+          event.preventDefault();
+          ui.meter.click();
+        }
+      });
+
+      ui.settingsOpen.addEventListener("click", openSettings);
+      ui.settingsClose.addEventListener("click", closeSettings);
+      ui.overlay.addEventListener("click", closeSettings);
+
+      ui.a4Choice.addEventListener("change", () => {
+        if (ui.a4Choice.value === "custom") {
+          ui.a4CustomRow.classList.remove("hidden");
+          state.prefs.a4 = Number(ui.a4Custom.value) || 440;
+        } else {
+          ui.a4CustomRow.classList.add("hidden");
+          state.prefs.a4 = Number(ui.a4Choice.value);
+        }
+        savePrefs();
+      });
+
+      ui.a4Custom.addEventListener("input", () => {
+        let value = Number(ui.a4Custom.value);
+        if (!Number.isFinite(value)) return;
+        value = Math.max(420, Math.min(460, value));
+        state.prefs.a4 = value;
+        savePrefs();
+      });
+
+      ui.themeChoice.addEventListener("change", () => {
+        state.prefs.theme = ui.themeChoice.value;
+        applyTheme(state.prefs.theme);
+        savePrefs();
+      });
+
+      ui.soundButton.addEventListener("click", () => {
+        state.prefs.sound = !state.prefs.sound;
+        setSwitch(ui.soundButton, state.prefs.sound);
+        savePrefs();
+      });
+
+      ui.showFreqButton.addEventListener("click", () => {
+        state.prefs.showFrequency = !state.prefs.showFrequency;
+        setSwitch(ui.showFreqButton, state.prefs.showFrequency);
+        ui.hz.classList.toggle("hidden", !state.prefs.showFrequency);
+        savePrefs();
+      });
+
+      window.addEventListener("beforeunload", stopMic);
+    })();
+  </script>
+</body>
+</html>

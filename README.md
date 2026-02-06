@@ -12,6 +12,8 @@ This repository is a collection of vibe-coded experiments, tools, and demos by [
 - [ErgoCoach](./ergocoach)
 - [ErgoCoach - Kimi 2.5 version](./ergo-kimi/)
 - [Maze Runner](./mazerunner/)
+- [Tuner](./tuner/)
+- [Tuner Codex](./tuner-codex/)
 
 ## Structure
 
