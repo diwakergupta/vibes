@@ -22,7 +22,9 @@ const $status         = document.getElementById('status');
 const $noteName       = document.getElementById('note-name');
 const $noteFreq       = document.getElementById('note-freq');
 const $meterWrap      = document.getElementById('meter-wrap');
-const $indicator      = document.getElementById('meter-indicator');
+const $needleGroup    = document.getElementById('needle-group');
+const $innerRing      = document.getElementById('inner-ring');
+const $arcSegments    = document.getElementById('arc-segments');
 const $cents          = document.getElementById('cents-display');
 const $toast          = document.getElementById('message-toast');
 const $streak         = document.getElementById('streak');
@@ -59,6 +61,73 @@ const AMBIENT_MS     = 30000;
 
 // ── Konami code easter egg ───────────────────
 const KONAMI = ['ArrowUp','ArrowUp','ArrowDown','ArrowDown','ArrowLeft','ArrowRight','ArrowLeft','ArrowRight','b','a'];
+
+// ── Radial meter setup ──────────────────────
+const ARC_TOTAL     = 240;   // degrees of arc sweep
+const ARC_SEGMENTS  = 24;    // 12 per side
+const ARC_GAP       = 2;     // degrees gap between segments
+const ARC_INNER_R   = 125;
+const ARC_OUTER_R   = 170;
+const CX = 200, CY = 200;
+
+let segmentEls = [];
+
+function initRadialMeter() {
+  const segArc = ARC_TOTAL / ARC_SEGMENTS;
+  const filled = segArc - ARC_GAP;
+
+  for (let i = 0; i < ARC_SEGMENTS; i++) {
+    const a1 = -120 + i * segArc + ARC_GAP / 2;
+    const a2 = a1 + filled;
+    const isLeft = i < ARC_SEGMENTS / 2;
+
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', arcPath(ARC_INNER_R, ARC_OUTER_R, a1, a2));
+    path.setAttribute('fill', isLeft ? '#FFE44D' : '#FF4444');
+    path.setAttribute('opacity', '0.15');
+    $arcSegments.appendChild(path);
+    segmentEls.push(path);
+  }
+}
+
+function arcPath(r1, r2, a1, a2) {
+  const rad = d => d * Math.PI / 180;
+  const px = (r, a) => CX + r * Math.sin(rad(a));
+  const py = (r, a) => CY - r * Math.cos(rad(a));
+  const lg = (a2 - a1 > 180) ? 1 : 0;
+  return `M${px(r2,a1)},${py(r2,a1)} A${r2},${r2},0,${lg},1,${px(r2,a2)},${py(r2,a2)} L${px(r1,a2)},${py(r1,a2)} A${r1},${r1},0,${lg},0,${px(r1,a1)},${py(r1,a1)} Z`;
+}
+
+function updateSegments(cents) {
+  const half = ARC_SEGMENTS / 2;
+  const litCount = Math.ceil((Math.abs(cents) / 50) * half);
+  const isFlat = cents <= 0;
+
+  for (let i = 0; i < ARC_SEGMENTS; i++) {
+    let lit = false;
+    if (isFlat && i < half) {
+      lit = (half - 1 - i) < litCount;
+    } else if (!isFlat && i >= half) {
+      lit = (i - half) < litCount;
+    }
+    segmentEls[i].setAttribute('opacity', lit ? '0.9' : '0.15');
+  }
+}
+
+function updateInnerRing(absCents) {
+  if (absCents < 3) {
+    $innerRing.setAttribute('stroke', '#44FF88');
+    $innerRing.setAttribute('opacity', '0.85');
+  } else if (absCents < 10) {
+    $innerRing.setAttribute('stroke', '#2DD4A8');
+    $innerRing.setAttribute('opacity', '0.5');
+  } else {
+    $innerRing.setAttribute('stroke', '#2DD4A8');
+    $innerRing.setAttribute('opacity', '0.3');
+  }
+}
+
+initRadialMeter();
 
 // ── Init ─────────────────────────────────────
 applySettings();
@@ -172,11 +241,12 @@ function onPitch(result) {
   $cents.textContent = `${sign}${c.toFixed(1)} \u00A2`;
   $cents.style.color = color;
 
-  // Meter position (cents clamped to ±50)
-  const clamped  = Math.max(-50, Math.min(50, smoothed.cents));
-  const pct      = 50 + clamped;              // 0–100
-  $indicator.style.left = `${pct}%`;
-  $indicator.style.boxShadow = `0 2px 12px rgba(0,0,0,.35), 0 0 0 3px ${color}40`;
+  // Radial needle position (cents clamped to ±50)
+  const clamped = Math.max(-50, Math.min(50, smoothed.cents));
+  const angle   = (clamped / 50) * 120;
+  $needleGroup.style.transform = `rotate(${angle}deg)`;
+  updateSegments(clamped);
+  updateInnerRing(Math.abs(smoothed.cents));
 
   // Status
   $status.textContent = Math.abs(smoothed.cents) < IN_TUNE_CENTS ? 'In tune' :
@@ -188,14 +258,14 @@ function onPitch(result) {
     if (!inTuneSince) inTuneSince = Date.now();
     const dt = Date.now() - inTuneSince;
 
-    $indicator.classList.toggle('glow', dt > 600);
+    $innerRing.classList.toggle('glow', dt > 600);
 
     if (dt > CELEBRATE_MS && Date.now() - lastToastTime > 5000) {
       celebrate(smoothed);
     }
   } else {
     inTuneSince = 0;
-    $indicator.classList.remove('glow');
+    $innerRing.classList.remove('glow');
   }
 
   // A440 easter egg
@@ -212,7 +282,7 @@ function fadeToIdle() {
   stableNote   = null;
   stableCount  = 0;
   inTuneSince  = 0;
-  $indicator.classList.remove('glow');
+  $innerRing.classList.remove('glow');
   scheduleAmbient();
 }
 

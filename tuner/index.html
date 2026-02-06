@@ -40,19 +40,22 @@
     <div class="tuner-screen" id="tuner-screen" role="main" aria-live="polite">
       <div class="status" id="status" aria-label="Tuner status">Listening...</div>
 
-      <div class="note-area">
-        <div class="note-name" id="note-name" aria-label="Detected note">&mdash;</div>
-        <div class="note-freq" id="note-freq" aria-label="Detected frequency"></div>
-      </div>
-
-      <div class="meter-wrap" id="meter-wrap" role="slider" aria-label="Tuning meter — tap to freeze" aria-valuemin="-50" aria-valuemax="50" aria-valuenow="0" tabindex="0">
-        <div class="meter-track">
-          <div class="meter-indicator" id="meter-indicator"></div>
-        </div>
+      <div class="radial-meter" id="meter-wrap" role="slider" aria-label="Tuning meter — tap to freeze" aria-valuemin="-50" aria-valuemax="50" aria-valuenow="0" tabindex="0">
+        <svg class="radial-svg" id="radial-svg" viewBox="0 0 400 400">
+          <g id="arc-segments"></g>
+          <circle class="inner-ring" id="inner-ring" cx="200" cy="200" r="105" fill="none" stroke="#2DD4A8" stroke-width="8" opacity="0.35"/>
+          <g class="needle-group" id="needle-group">
+            <path class="needle" d="M200,35 L191,170 Q200,200 209,170 Z" fill="#2DD4A8"/>
+          </g>
+          <circle class="needle-cap" cx="200" cy="200" r="6" fill="#1a1a1e"/>
+          <text class="arc-label" x="53" y="310" text-anchor="middle">-50</text>
+          <text class="arc-label" x="347" y="310" text-anchor="middle">+50</text>
+        </svg>
+        <div class="radial-note" id="note-name" aria-label="Detected note">&mdash;</div>
         <div class="meter-frozen-badge">Frozen</div>
-        <div class="meter-labels"><span>Flat</span><span>Sharp</span></div>
       </div>
 
+      <div class="note-freq" id="note-freq" aria-label="Detected frequency"></div>
       <div class="cents-display" id="cents-display" aria-label="Cents deviation"></div>
       <div class="message-toast" id="message-toast" aria-live="assertive"></div>
       <div class="streak hidden" id="streak" aria-label="Tuning streak"></div>
