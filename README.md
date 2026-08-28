@@ -14,6 +14,7 @@ This repository is a collection of vibe-coded experiments, tools, and demos by [
 - [Maze Runner](./mazerunner/)
 - [Tuner](./tuner/)
 - [Tuner Codex](./tuner-codex/)
+- [Tetris](./tetris/)
 
 ## Structure
 
